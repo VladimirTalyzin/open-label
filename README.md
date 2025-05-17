@@ -180,7 +180,6 @@ This feature is excellent for bootstrapping annotations – get a rough mask fro
 *   [ ] Customizable hotkeys for tools and actions.
 *   [ ] User authentication and multi-user support.
 *   [ ] Enhanced UI/UX for even smoother workflows.
-*   [ ] Dockerization for easier deployment.
 *   [ ] Comprehensive test suite.
 
 ## 🤝 Contributing

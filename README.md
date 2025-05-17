@@ -4,7 +4,6 @@ OpenLabel is a powerful, self-hosted image annotation tool designed to streamlin
 
 Whether you're working locally or need a server-based solution, OpenLabel provides an intuitive interface for raster and vector annotation, along with integrated model prediction capabilities.
 
-**(Optional: Consider adding a GIF or a couple of screenshots here showing the interface in action, especially the labeling process and an AntiLabel example.)**
 <!--
 [[Screenshot 1]](https://open-label.poisk.com/static/promo/image1.png)
 [[Screenshot 2]](https://open-label.poisk.com/static/promo/image2.png)

@@ -1,0 +1,14 @@
+{
+	"images":
+	[
+		{
+			"name": "799m-Road_E_105_Murmansk_Pechenga_seredina_NEW_Megalith_Road.png",
+			"masks_count": 5
+		},
+		{
+			"name": "200m-Road_E_105_Murmansk_Pechenga_seredina_NEW_Ruins.png"
+			"masks_count": 0
+		}
+	],
+	"list_images_url": "/list-images/5346534534354.png"
+}

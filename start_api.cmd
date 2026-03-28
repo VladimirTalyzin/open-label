@@ -2,7 +2,9 @@
 echo Starting OpenLabel API...
 echo.
 
+cd /d e:\PythonProjects\OpenLabel\server
+
 REM Запуск API
-e:\PythonProjects\PDFParser\.venv\Scripts\uvicorn.exe main:app --host 0.0.0.0 --port 8011 --reload
+.venv\Scripts\uvicorn.exe main:app --host 0.0.0.0 --port 8001 --reload
 
 pause

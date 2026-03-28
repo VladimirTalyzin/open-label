@@ -1,5 +1,10 @@
+import sys
 import traceback
 from typing import Optional
+
+if sys.platform == "win32":
+    import colorama
+    colorama.init()
 
 import httpx
 import hashlib
@@ -31,19 +36,23 @@ app.add_middleware(
 )
 
 
+def join_path(*args):
+    return path.join(*args).replace("\\", "/")
+
+
 def get_script_directory():
-    return path.dirname(path.abspath(__file__))
+    return path.dirname(path.abspath(__file__)).replace("\\", "/")
 
 
-dist_dir = path.join(get_script_directory(), "..", "dist")
+dist_dir = join_path(get_script_directory(), "..", "dist")
 if path.exists(dist_dir):
-    app.mount("/assets", StaticFiles(directory=path.join(dist_dir, "assets")), name="assets")
+    app.mount("/assets", StaticFiles(directory=join_path(dist_dir, "assets")), name="assets")
 
 
 @app.get("/", response_class=HTMLResponse, tags=["Global"])
 async def home_page():
     script_path = get_script_directory()
-    html_path = path.join(script_path, "..", "dist", "index.html")
+    html_path = join_path(script_path, "..", "dist", "index.html")
 
     if not path.exists(html_path):
         return HTMLResponse(content="<h1>Run `npm run build` first</h1>", status_code=503)
@@ -56,7 +65,7 @@ async def home_page():
 @app.get("/add_project", tags=["Global"])
 async def add_project():
     script_path = get_script_directory()
-    project_path = path.join(script_path, "projects")
+    project_path = join_path(script_path, "projects")
 
     if not path.exists(project_path):
         makedirs(project_path)
@@ -68,10 +77,10 @@ async def add_project():
             max_project_id = max(max_project_id, project_id)
 
     new_project_id = max_project_id + 1
-    new_project_path = path.join(project_path, str(new_project_id))
+    new_project_path = join_path(project_path, str(new_project_id))
     makedirs(new_project_path)
 
-    settings_file = path.join(new_project_path, "project_settings.json")
+    settings_file = join_path(new_project_path, "project_settings.json")
     with open(settings_file, "w") as file_settings:
         dump(create_project_data(new_project_id, []), file_settings)
 
@@ -83,7 +92,7 @@ def create_project_data(new_project_id: int, images: list):
 
 
 def load_project_data(project_path):
-    settings_file = path.join(project_path, "project_settings.json")
+    settings_file = join_path(project_path, "project_settings.json")
     if not path.exists(settings_file):
         return None
 
@@ -102,12 +111,15 @@ def load_project_data(project_path):
 @app.get("/get_projects_list", tags=["Global"])
 async def get_projects_list():
     script_path = get_script_directory()
-    projects_path = path.join(script_path, "projects")
+    projects_path = join_path(script_path, "projects")
+
+    if not path.exists(projects_path):
+        makedirs(projects_path)
 
     projects_list = []
     for entry in listdir(projects_path):
         if entry.isdigit():
-            project_path = path.join(projects_path, entry)
+            project_path = join_path(projects_path, entry)
             project_data = load_project_data(project_path)
             if project_data:
                 projects_list.append(project_data)
@@ -120,7 +132,7 @@ async def get_projects_list():
 @app.get("/get_project_data/{id_project}", tags=["Project"])
 async def get_project_data(id_project: int):
     script_path = get_script_directory()
-    project_path = path.join(script_path, "projects", str(id_project))
+    project_path = join_path(script_path, "projects", str(id_project))
 
     project_data = load_project_data(project_path)
     if project_data:
@@ -204,16 +216,16 @@ def get_settings_path(id_project):
 
 def get_all_path(id_project):
     script_path = get_script_directory()
-    project_path = path.join(script_path, "projects")
-    project_path = path.join(project_path, str(id_project))
+    project_path = join_path(script_path, "projects")
+    project_path = join_path(project_path, str(id_project))
 
     if not path.exists(project_path):
         raise HTTPException(status_code=404, detail="Project not found")
 
-    images_path = path.join(project_path, "images")
-    preview_path = path.join(project_path, "preview")
-    masks_path = path.join(project_path, "masks")
-    settings_file = path.join(project_path, "project_settings.json")
+    images_path = join_path(project_path, "images")
+    preview_path = join_path(project_path, "preview")
+    masks_path = join_path(project_path, "masks")
+    settings_file = join_path(project_path, "project_settings.json")
 
     return project_path, images_path, preview_path, masks_path, settings_file
 
@@ -221,11 +233,11 @@ def get_all_path(id_project):
 @app.post("/upload_image/{id_project}", tags=["Image"])
 async def upload_image(id_project: int, image: UploadFile = File(...)):
     script_path = get_script_directory()
-    project_path = path.join(script_path, "projects")
-    project_path = path.join(project_path, str(id_project))
-    images_path = path.join(project_path, "images")
-    preview_path = path.join(project_path, "preview")
-    settings_file = path.join(project_path, "project_settings.json")
+    project_path = join_path(script_path, "projects")
+    project_path = join_path(project_path, str(id_project))
+    images_path = join_path(project_path, "images")
+    preview_path = join_path(project_path, "preview")
+    settings_file = join_path(project_path, "project_settings.json")
 
     if not path.exists(project_path):
         raise HTTPException(status_code=404, detail="Project not found")
@@ -237,7 +249,7 @@ async def upload_image(id_project: int, image: UploadFile = File(...)):
         makedirs(preview_path)
 
     image_name = transliterate(image.filename)
-    image_path = path.join(images_path, image_name)
+    image_path = join_path(images_path, image_name)
 
     if path.exists(image_path):
         return JSONResponse(content={"result": "error", "message": "Image with this name already exists."})
@@ -247,9 +259,13 @@ async def upload_image(id_project: int, image: UploadFile = File(...)):
             file.write(await image.read())
 
         if not image_name.lower().endswith(".png"):
-            image = Image.open(image_path)
-            image.save(image_path, "PNG")
+            img = Image.open(image_path)
+            png_name = path.splitext(image_name)[0] + ".png"
+            png_path = join_path(images_path, png_name)
+            img.save(png_path, "PNG")
             remove(image_path)
+            image_name = png_name
+            image_path = png_path
 
         preview_path, preview_height = create_preview(image_name, image_path, preview_path)
 
@@ -289,18 +305,18 @@ async def upload_image(id_project: int, image: UploadFile = File(...)):
 @app.get("/get_png_mask/{id_project}/{image_name}/{label}", tags=["Mask"])
 async def get_png_mask(id_project: int, image_name: str, label: str):
     script_path = get_script_directory()
-    project_path = path.join(script_path, "projects", str(id_project))
+    project_path = join_path(script_path, "projects", str(id_project))
 
     if not path.exists(project_path):
         raise HTTPException(status_code=404, detail="Project not found")
 
-    masks_path = path.join(project_path, "masks")
+    masks_path = join_path(project_path, "masks")
 
     image_name = transliterate(path.basename(image_name))
     label = transliterate(path.basename(label))
 
     mask_filename = f"{image_name}_{label}.png"
-    mask_path = path.join(masks_path, mask_filename)
+    mask_path = join_path(masks_path, mask_filename)
 
     if not path.exists(mask_path):
         return Response(status_code=204)
@@ -316,12 +332,12 @@ async def upload_png_mask(
     image: UploadFile = File(...)
 ):
     script_path = get_script_directory()
-    project_path = path.join(script_path, "projects", str(id_project))
+    project_path = join_path(script_path, "projects", str(id_project))
 
     if not path.exists(project_path):
         raise HTTPException(status_code=404, detail="Project not found")
 
-    masks_path = path.join(project_path, "masks")
+    masks_path = join_path(project_path, "masks")
 
     if not path.exists(masks_path):
         makedirs(masks_path)
@@ -330,7 +346,7 @@ async def upload_png_mask(
     label = transliterate(path.basename(label))
 
     mask_filename = f"{image_name}_{label}.png"
-    mask_path = path.join(masks_path, mask_filename)
+    mask_path = join_path(masks_path, mask_filename)
 
     try:
         image_content = await image.read()
@@ -344,7 +360,7 @@ async def upload_png_mask(
         new_image = new_image.point(lambda p: 255 if p >= threshold_value else 0)
 
         undo_folder_name = f"{image_name}_{label}.png"
-        undo_path = path.join(project_path, "undo", undo_folder_name)
+        undo_path = join_path(project_path, "undo", undo_folder_name)
         if not path.exists(undo_path):
             makedirs(undo_path)
 
@@ -364,7 +380,7 @@ async def upload_png_mask(
                         return JSONResponse(content={"result": "ok", "message": "Mask already up-to-date"})
 
                 undo_filename = f"{timestamp}_{incoming_hash}.png"
-                undo_file_path = path.join(undo_path, undo_filename)
+                undo_file_path = join_path(undo_path, undo_filename)
 
                 new_image.save(undo_file_path, 'PNG')
 
@@ -372,7 +388,7 @@ async def upload_png_mask(
                 creation_time = path.getctime(mask_path)
                 old_timestamp = datetime.fromtimestamp(creation_time).strftime("%Y-%m-%d_%H-%M-%S")
                 safe_move(mask_path, undo_path, f"{old_timestamp}_start_undo.png")
-                new_image.save(path.join(undo_path, f"{timestamp}_{incoming_hash}.png"), 'PNG')
+                new_image.save(join_path(undo_path, f"{timestamp}_{incoming_hash}.png"), 'PNG')
 
         new_image.save(mask_path, 'PNG')
 
@@ -386,12 +402,12 @@ async def upload_png_mask(
 @app.get("/undo_png_mask/{id_project}/{image_name}/{label}", tags=["Mask"])
 async def undo_png_mask(id_project: int, image_name: str, label: str):
     script_path = get_script_directory()
-    project_path = path.join(script_path, "projects", str(id_project))
+    project_path = join_path(script_path, "projects", str(id_project))
 
     if not path.exists(project_path):
         raise HTTPException(status_code=404, detail="Project not found")
 
-    masks_path = path.join(project_path, "masks")
+    masks_path = join_path(project_path, "masks")
     if not path.exists(masks_path):
         raise HTTPException(status_code=404, detail="Masks folder not found")
 
@@ -399,10 +415,10 @@ async def undo_png_mask(id_project: int, image_name: str, label: str):
     label = transliterate(path.basename(label))
 
     mask_filename = f"{image_name}_{label}.png"
-    mask_path = path.join(masks_path, mask_filename)
+    mask_path = join_path(masks_path, mask_filename)
 
     undo_folder_name = f"{image_name}_{label}.png"
-    undo_path = path.join(project_path, "undo", undo_folder_name)
+    undo_path = join_path(project_path, "undo", undo_folder_name)
 
     if not path.exists(undo_path):
         raise HTTPException(status_code=404, detail="Undo folder not found")
@@ -413,7 +429,7 @@ async def undo_png_mask(id_project: int, image_name: str, label: str):
 
     undo_files_sorted = sorted(undo_files)
     first_undo_file = undo_files_sorted[-1]
-    first_undo_file_path = path.join(undo_path, first_undo_file)
+    first_undo_file_path = join_path(undo_path, first_undo_file)
 
     match_data = match(r"(\d{4}-\d{2}-\d{2}_\d{2}-\d{2}-\d{2})_", first_undo_file)
     if not match_data:
@@ -437,22 +453,22 @@ async def undo_png_mask(id_project: int, image_name: str, label: str):
 @app.get("/get_vector_mask/{id_project}/{image_name}/{label}", tags=["Mask"])
 async def get_vector_mask(id_project: int, image_name: str, label: str):
     script_path = get_script_directory()
-    project_path = path.join(script_path, "projects", str(id_project))
+    project_path = join_path(script_path, "projects", str(id_project))
 
     if not path.exists(project_path):
         raise HTTPException(status_code=404, detail="Project not found")
 
-    vector_data_path = path.join(project_path, "vector_data")
-    masks_path = path.join(project_path, "masks")
+    vector_data_path = join_path(project_path, "vector_data")
+    masks_path = join_path(project_path, "masks")
 
     image_name = transliterate(path.basename(image_name))
     label = transliterate(path.basename(label))
 
     vector_filename = f"{image_name}_{label}.json"
-    vector_file_path = path.join(vector_data_path, vector_filename)
+    vector_file_path = join_path(vector_data_path, vector_filename)
 
     mask_filename = f"{image_name}_{label}.png"
-    mask_file_path = path.join(masks_path, mask_filename)
+    mask_file_path = join_path(masks_path, mask_filename)
 
     has_png_mask = path.exists(mask_file_path)
 
@@ -478,12 +494,12 @@ async def get_vector_mask(id_project: int, image_name: str, label: str):
 @app.post("/upload_vector_mask/{id_project}/{image_name}/{label}", tags=["Mask"])
 async def upload_vector_mask(id_project: int, image_name: str, label: str, json_data: str = Form(...)):
     script_path = get_script_directory()
-    project_path = path.join(script_path, "projects", str(id_project))
+    project_path = join_path(script_path, "projects", str(id_project))
 
     if not path.exists(project_path):
         raise HTTPException(status_code=404, detail="Project not found")
 
-    vector_data_path = path.join(project_path, "vector_data")
+    vector_data_path = join_path(project_path, "vector_data")
     if not path.exists(vector_data_path):
         makedirs(vector_data_path)
 
@@ -491,7 +507,7 @@ async def upload_vector_mask(id_project: int, image_name: str, label: str, json_
     label = transliterate(path.basename(label))
 
     vector_filename = f"{image_name}_{label}.json"
-    vector_file_path = path.join(vector_data_path, vector_filename)
+    vector_file_path = join_path(vector_data_path, vector_filename)
 
     try:
         json_object = loads(json_data)
@@ -508,9 +524,9 @@ async def upload_vector_mask(id_project: int, image_name: str, label: str, json_
 @app.get("/image/{id_project}/{image_name}", tags=["Image"])
 async def get_image(id_project: int, image_name: str):
     script_path = get_script_directory()
-    project_path = path.join(script_path, "projects", str(id_project))
-    images_path = path.join(project_path, "images")
-    image_file_path = path.join(images_path, image_name)
+    project_path = join_path(script_path, "projects", str(id_project))
+    images_path = join_path(project_path, "images")
+    image_file_path = join_path(images_path, image_name)
 
     if not path.exists(project_path):
         raise HTTPException(status_code=404, detail="Project not found")
@@ -524,12 +540,12 @@ async def get_image(id_project: int, image_name: str):
 @app.post("/delete_image", tags=["Image"])
 async def delete_image(id_project: int = Form(...), image_name: str = Form(...)):
     script_path = get_script_directory()
-    project_path = path.join(script_path, "projects", str(id_project))
-    images_path = path.join(project_path, "images")
-    preview_path = path.join(project_path, "preview")
-    masks_path = path.join(project_path, "masks")
-    deleted_path = path.join(project_path, "deleted")
-    settings_file = path.join(project_path, "project_settings.json")
+    project_path = join_path(script_path, "projects", str(id_project))
+    images_path = join_path(project_path, "images")
+    preview_path = join_path(project_path, "preview")
+    masks_path = join_path(project_path, "masks")
+    deleted_path = join_path(project_path, "deleted")
+    settings_file = join_path(project_path, "project_settings.json")
 
     if not path.exists(project_path):
         raise HTTPException(status_code=404, detail="Project not found")
@@ -537,12 +553,12 @@ async def delete_image(id_project: int = Form(...), image_name: str = Form(...))
     if not path.exists(deleted_path):
         makedirs(deleted_path)
 
-    image_file_path = path.join(images_path, image_name)
-    preview_file_path = path.join(preview_path, image_name)
+    image_file_path = join_path(images_path, image_name)
+    preview_file_path = join_path(preview_path, image_name)
 
     # Перемещаем изображение в папку deleted
     if path.exists(image_file_path):
-        deleted_image_path = path.join(deleted_path, "images")
+        deleted_image_path = join_path(deleted_path, "images")
 
         if not path.exists(deleted_image_path):
             makedirs(deleted_image_path)
@@ -551,7 +567,7 @@ async def delete_image(id_project: int = Form(...), image_name: str = Form(...))
 
     # Перемещаем превью изображения в папку deleted
     if path.exists(preview_file_path):
-        deleted_preview_path = path.join(deleted_path, "preview")
+        deleted_preview_path = join_path(deleted_path, "preview")
 
         if not path.exists(deleted_preview_path):
             makedirs(deleted_preview_path)
@@ -562,8 +578,8 @@ async def delete_image(id_project: int = Form(...), image_name: str = Form(...))
     if path.exists(masks_path):
         for mask_file in listdir(masks_path):
             if mask_file.startswith(image_name):
-                mask_file_path = path.join(masks_path, mask_file)
-                deleted_mask_path = path.join(deleted_path, "masks")
+                mask_file_path = join_path(masks_path, mask_file)
+                deleted_mask_path = join_path(deleted_path, "masks")
 
                 if not path.exists(deleted_mask_path):
                     makedirs(deleted_mask_path)
@@ -602,15 +618,15 @@ async def update_project(id_project: int):
             image_data = \
                 {
                     "image": image_name,
-                    "time": datetime.fromtimestamp(path.getmtime(path.join(images_path, image_name))).strftime("%Y-%m-%d %H:%M:%S")
+                    "time": datetime.fromtimestamp(path.getmtime(join_path(images_path, image_name))).strftime("%Y-%m-%d %H:%M:%S")
                 }
 
-            preview_image = path.join(preview_path, image_name)
+            preview_image = join_path(preview_path, image_name)
             if path.exists(preview_image) and path.getsize(preview_image) == 0:
                 remove(preview_path)
 
             if not path.exists(preview_image) or path.getsize(preview_image) == 0:
-                preview_image, preview_height = create_preview(image_name, path.join(images_path, image_name), preview_path)
+                preview_image, preview_height = create_preview(image_name, join_path(images_path, image_name), preview_path)
                 image_data["preview_height"] = preview_height
 
             else:
@@ -633,7 +649,7 @@ async def update_project(id_project: int):
 
     images.sort(key=lambda item: item["time"])
 
-    all_previews_path = path.join(project_path, "all_previews.png")
+    all_previews_path = join_path(project_path, "all_previews.png")
     if path.exists(all_previews_path):
         remove(all_previews_path)
 
@@ -642,7 +658,7 @@ async def update_project(id_project: int):
     preview_heights = []
     for image_data in images:
         try:
-            preview_image = Image.open(path.join(preview_path, image_data["image"]))
+            preview_image = Image.open(join_path(preview_path, image_data["image"]))
         except FileNotFoundError:
             preview_image = Image.new("RGB", (PREVIEW_WIDTH, 90), color="white")
             draw = ImageDraw.Draw(preview_image)
@@ -681,8 +697,8 @@ async def update_project(id_project: int):
 def prepare_project_image(image_name, images_path):
     transliterated_name = transliterate(image_name)
     if transliterated_name != image_name:
-        old_path = path.join(images_path, image_name)
-        new_path = path.join(images_path, transliterated_name)
+        old_path = join_path(images_path, image_name)
+        new_path = join_path(images_path, transliterated_name)
         remove(old_path)
         makedirs(images_path, exist_ok=True)
         remove(new_path)
@@ -694,12 +710,12 @@ def prepare_project_image(image_name, images_path):
 @app.get("/get_images_list/{id_project}", tags=["Project"])
 async def get_images_list(id_project: int):
     script_path = get_script_directory()
-    project_path = path.join(script_path, "projects", str(id_project))
+    project_path = join_path(script_path, "projects", str(id_project))
 
     if not path.exists(project_path):
         raise HTTPException(status_code=404, detail="Project not found")
 
-    settings_file = path.join(project_path, "project_settings.json")
+    settings_file = join_path(project_path, "project_settings.json")
     if path.exists(settings_file):
         with open(settings_file, "r") as file_settings:
             project_data = load(file_settings)
@@ -712,7 +728,7 @@ async def get_images_list(id_project: int):
 def create_preview(image_name: str, image_path: str, preview_path: str) -> tuple:
     image = Image.open(image_path)
     image.thumbnail((PREVIEW_WIDTH, PREVIEW_WIDTH))
-    preview_path = path.join(preview_path, image_name)
+    preview_path = join_path(preview_path, image_name)
     image.save(preview_path)
 
     preview_width, preview_height = image.size
@@ -721,7 +737,7 @@ def create_preview(image_name: str, image_path: str, preview_path: str) -> tuple
 
 
 def update_all_previews(image_path: str, preview_height: int, project_path: str):
-    all_previews_path = path.join(project_path, "all_previews.png")
+    all_previews_path = join_path(project_path, "all_previews.png")
 
     if path.exists(all_previews_path):
         all_previews = Image.open(all_previews_path)
@@ -743,8 +759,8 @@ def update_all_previews(image_path: str, preview_height: int, project_path: str)
 @app.get("/get_preview/{id_project}.png", tags=["Project"])
 async def get_preview(id_project: int):
     script_path = get_script_directory()
-    project_path = path.join(script_path, "projects", str(id_project))
-    all_previews_path = path.join(project_path, "all_previews.png")
+    project_path = join_path(script_path, "projects", str(id_project))
+    all_previews_path = join_path(project_path, "all_previews.png")
 
     if not path.exists(all_previews_path):
         await update_project(id_project)
@@ -763,18 +779,18 @@ async def get_preview(id_project: int):
 @app.get("/delete_project/{id_project}", tags=["Project"])
 async def delete_project(id_project: int):
     script_path = get_script_directory()
-    project_path = path.join(script_path, "projects", str(id_project))
+    project_path = join_path(script_path, "projects", str(id_project))
 
     if not path.exists(project_path):
         return {"error": "Project not found"}
 
-    deleted_projects_path = path.join(script_path, "deleted")
+    deleted_projects_path = join_path(script_path, "deleted")
     if not path.exists(deleted_projects_path):
         makedirs(deleted_projects_path)
 
     unique_id = uuid4().hex
     deleted_project_name = f"{id_project}_{unique_id}"
-    deleted_project_path = path.join(deleted_projects_path, deleted_project_name)
+    deleted_project_path = join_path(deleted_projects_path, deleted_project_name)
 
     safe_move(project_path, deleted_project_path)
 

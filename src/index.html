@@ -8,10 +8,15 @@
   <link rel="icon" type="image/png" sizes="16x16" href="/favicon-16x16.png">
 </head>
 <body>
-  <div class="container mt-4">
-    <h1>Open Label</h1>
+  <nav class="navbar navbar-expand navbar-dark bg-dark px-3">
+    <span class="navbar-brand mb-0 h1">Open Label</span>
+    <div class="ms-auto">
+      <button id="add-project-button" class="btn btn-outline-light btn-sm">+ Add project</button>
+    </div>
+  </nav>
+
+  <div class="container-fluid mt-4 px-4">
     <div id="projects-container"></div>
-    <button id="add-project-button" class="btn btn-primary mt-3">Add project</button>
   </div>
 
   <script type="module" src="/js/app.js"></script>

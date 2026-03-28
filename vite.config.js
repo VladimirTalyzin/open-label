@@ -1,0 +1,35 @@
+import { defineConfig } from 'vite'
+
+export default defineConfig({
+  root: 'src',
+  publicDir: '../public',
+  build: {
+    outDir: '../dist',
+    emptyOutDir: true,
+  },
+  server: {
+    port: 3000,
+    proxy: {
+      '/add_project': 'http://localhost:8001',
+      '/get_projects_list': 'http://localhost:8001',
+      '/get_project_data': 'http://localhost:8001',
+      '/set_project_name': 'http://localhost:8001',
+      '/set_project_labels': 'http://localhost:8001',
+      '/set_prediction_url': 'http://localhost:8001',
+      '/upload_image': 'http://localhost:8001',
+      '/get_images_list': 'http://localhost:8001',
+      '/get_png_mask': 'http://localhost:8001',
+      '/upload_png_mask': 'http://localhost:8001',
+      '/get_vector_mask': 'http://localhost:8001',
+      '/upload_vector_mask': 'http://localhost:8001',
+      '/undo_png_mask': 'http://localhost:8001',
+      '/image': 'http://localhost:8001',
+      '/get_preview': 'http://localhost:8001',
+      '/predict': 'http://localhost:8001',
+      '/predict_with_crop': 'http://localhost:8001',
+      '/delete_image': 'http://localhost:8001',
+      '/delete_project': 'http://localhost:8001',
+      '/update_project': 'http://localhost:8001',
+    },
+  },
+})

@@ -21,8 +21,12 @@ def transliterate(name):
     return sub(r'[^A-Za-z0-9_\-.]+', '', transliterated)
 
 
+def join_path(*args):
+    return path.join(*args).replace("\\", "/")
+
+
 def safe_move(source_file, destination_folder, set_new_name=None):
-    destination_file = path.join(destination_folder, path.basename(source_file))
+    destination_file = join_path(destination_folder, path.basename(source_file))
 
     if path.exists(destination_file):
         remove(destination_file)
@@ -30,5 +34,5 @@ def safe_move(source_file, destination_folder, set_new_name=None):
     move(source_file, destination_folder)
 
     if set_new_name:
-        new_destination_file = path.join(destination_folder, set_new_name)
+        new_destination_file = join_path(destination_folder, set_new_name)
         rename(destination_file, new_destination_file)

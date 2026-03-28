@@ -37,7 +37,7 @@ export function updateProjects(responseJson, clear)
         if (oldProjectDiv == null)
         {
             projectDiv.id = projectId
-            projectDiv.classList.add("row", "mb-3")
+            projectDiv.classList.add("mb-3")
         }
         else
         {
@@ -45,7 +45,7 @@ export function updateProjects(responseJson, clear)
         }
 
         const projectCard = document.createElement("div")
-        projectCard.classList.add("col-md-12", "card")
+        projectCard.classList.add("project-card")
 
         const projectCardBody = document.createElement("div")
         projectCardBody.classList.add("card-body")
@@ -69,28 +69,43 @@ export function updateProjects(responseJson, clear)
 
         imagesCount.appendChild(imagesCountSpan)
 
-        const projectButtons = document.createElement("div")
-        projectButtons.classList.add("btn-group", "mt-2")
+        const projectButtons = document.createElement("ul")
+        projectButtons.classList.add("nav", "project-tabs", "mt-3")
 
-        const imagesButton = document.createElement("button")
-        imagesButton.classList.add("btn", "btn-secondary")
+        const imagesLi = document.createElement("li")
+        imagesLi.classList.add("nav-item")
+        const imagesButton = document.createElement("a")
+        imagesButton.classList.add("nav-link")
+        imagesButton.href = "#"
         imagesButton.textContent = "Images"
+        imagesLi.appendChild(imagesButton)
 
-        const labelsButton = document.createElement("button")
-        labelsButton.classList.add("btn", "btn-secondary")
+        const labelsLi = document.createElement("li")
+        labelsLi.classList.add("nav-item")
+        const labelsButton = document.createElement("a")
+        labelsButton.classList.add("nav-link")
+        labelsButton.href = "#"
         labelsButton.textContent = "Labels"
+        labelsLi.appendChild(labelsButton)
 
-        const settingsButton = document.createElement("button")
-        settingsButton.classList.add("btn", "btn-secondary")
+        const settingsLi = document.createElement("li")
+        settingsLi.classList.add("nav-item")
+        const settingsButton = document.createElement("a")
+        settingsButton.classList.add("nav-link")
+        settingsButton.href = "#"
         settingsButton.textContent = "Settings"
+        settingsLi.appendChild(settingsButton)
+
+        const tabContentWrapper = document.createElement("div")
+        tabContentWrapper.classList.add("project-tab-content")
+        tabContentWrapper.style.display = "none"
 
         const imagesDiv = document.createElement("div")
-        imagesDiv.classList.add("mt-2", "container-fluid")
+        imagesDiv.classList.add("container-fluid", "p-0")
         imagesDiv.id = "project-images"
         imagesDiv.style.display = "none"
 
         const labelsDiv = document.createElement("div")
-        labelsDiv.classList.add("mt-2", "col-md-12")
         labelsDiv.id = "project-labels"
         labelsDiv.style.display = "none"
 
@@ -111,7 +126,7 @@ export function updateProjects(responseJson, clear)
         setValueListener(labelsTextArea, "set_project_labels", "labels", {id_project: project.id_project})
 
         const settingsDiv = document.createElement("div")
-        settingsDiv.classList.add("mt-2", "col-md-12", "text-center")
+        settingsDiv.classList.add("text-center")
         settingsDiv.id = "project-settings"
         settingsDiv.style.display = "none"
 
@@ -151,16 +166,23 @@ export function updateProjects(responseJson, clear)
         projectCardBody.appendChild(projectUuid)
         projectCardBody.appendChild(projectNameInput)
         projectCardBody.appendChild(imagesCount)
-        projectButtons.appendChild(imagesButton)
-        projectButtons.appendChild(labelsButton)
-        projectButtons.appendChild(settingsButton)
+        projectButtons.appendChild(imagesLi)
+        projectButtons.appendChild(labelsLi)
+        projectButtons.appendChild(settingsLi)
+        tabContentWrapper.appendChild(imagesDiv)
+        tabContentWrapper.appendChild(labelsDiv)
+        tabContentWrapper.appendChild(settingsDiv)
         projectCard.appendChild(projectCardBody)
         projectCard.appendChild(projectButtons)
+        projectCard.appendChild(tabContentWrapper)
         projectDiv.appendChild(projectCard)
-        projectDiv.appendChild(imagesDiv)
-        projectDiv.appendChild(labelsDiv)
-        projectDiv.appendChild(settingsDiv)
         projectsContainer.appendChild(projectDiv)
+
+        const tabMap = [
+            {button: imagesButton, div: imagesDiv},
+            {button: labelsButton, div: labelsDiv},
+            {button: settingsButton, div: settingsDiv}
+        ]
 
         const showContent = (currentBlock, onFirstOpen = null, onOpen = null) =>
         {
@@ -169,6 +191,8 @@ export function updateProjects(responseJson, clear)
             imagesDiv.style.display = "none"
             labelsDiv.style.display = "none"
             settingsDiv.style.display = "none"
+
+            tabMap.forEach(t => t.button.classList.remove("active"))
 
             if (!isOpen)
             {
@@ -187,10 +211,19 @@ export function updateProjects(responseJson, clear)
                 }
 
                 currentBlock.style.display = "block"
+                tabContentWrapper.style.display = "block"
+
+                const activeTab = tabMap.find(t => t.div === currentBlock)
+                if (activeTab) activeTab.button.classList.add("active")
+            }
+            else
+            {
+                tabContentWrapper.style.display = "none"
             }
         }
 
-        addEventListenerWithId(imagesButton, "click", "show_images", () =>
+        addEventListenerWithId(imagesButton, "click", "show_images", (e) => {
+            e.preventDefault()
             showContent(
                 imagesDiv,
                 () =>
@@ -202,7 +235,9 @@ export function updateProjects(responseJson, clear)
                             imagesDiv.innerHTML = ""
 
                             const imagesListDiv = document.createElement("div")
-                            imagesListDiv.classList.add("row", "container-fluid")
+                            imagesListDiv.style.display = "flex"
+                            imagesListDiv.style.flexWrap = "wrap"
+                            imagesListDiv.style.gap = "0.5rem"
 
                             const previewFile = respJson.hasOwnProperty("preview_file") ? respJson.preview_file : null
 
@@ -224,9 +259,10 @@ export function updateProjects(responseJson, clear)
                                 const image = imageVariable
                                 const pf = previewFileVariable
                                 const imageCardDiv = document.createElement("div")
-                                imageCardDiv.classList.add("card", "mb-2")
+                                imageCardDiv.classList.add("image-tile-card")
                                 imageCardDiv.style.width = `calc(${imagesWidth} + 6.5pt)`
-                                imageCardDiv.style.marginRight = "2.5pt"
+                                imageCardDiv.style.display = "inline-block"
+                                imageCardDiv.style.verticalAlign = "top"
 
                                 const imageBlock = document.createElement("div")
                                 prepareImage(imageBlock, image, pf)
@@ -234,9 +270,6 @@ export function updateProjects(responseJson, clear)
 
                                 const imageCardBody = document.createElement("div")
                                 imageCardBody.classList.add("card-body")
-                                imageCardBody.style.paddingLeft = "2.5pt"
-                                imageCardBody.style.paddingRight = "0"
-                                imageCardBody.style.width = "94%"
 
                                 const imageTitle = document.createElement("div")
                                 imageTitle.classList.add("card-title", "d-flex", "justify-content-between", "align-items-center")
@@ -1169,8 +1202,8 @@ export function updateProjects(responseJson, clear)
                             imagesDiv.style.display = "block"
 
                             const addImageButton = document.createElement("button")
-                            addImageButton.classList.add("btn", "btn-primary", "mt-3")
-                            addImageButton.textContent = "Add image"
+                            addImageButton.classList.add("btn", "btn-outline-primary", "btn-sm", "mt-2")
+                            addImageButton.textContent = "+ Add image"
 
                             addEventListenerWithId(addImageButton, "click", "add_image", () =>
                             {
@@ -1217,9 +1250,9 @@ export function updateProjects(responseJson, clear)
                         }
                     )
             )
-        )
+        })
 
-        addEventListenerWithId(labelsButton, 'click', 'show_labels', () => showContent(labelsDiv))
-        addEventListenerWithId(settingsButton, 'click', 'show_settings', () => showContent(settingsDiv))
+        addEventListenerWithId(labelsButton, 'click', 'show_labels', (e) => { e.preventDefault(); showContent(labelsDiv) })
+        addEventListenerWithId(settingsButton, 'click', 'show_settings', (e) => { e.preventDefault(); showContent(settingsDiv) })
     }
 }

@@ -35,13 +35,18 @@ def get_script_directory():
     return path.dirname(path.abspath(__file__))
 
 
-app.mount("/static", StaticFiles(directory=path.join(get_script_directory(), "static")), name="static")
+dist_dir = path.join(get_script_directory(), "..", "dist")
+if path.exists(dist_dir):
+    app.mount("/assets", StaticFiles(directory=path.join(dist_dir, "assets")), name="assets")
 
 
 @app.get("/", response_class=HTMLResponse, tags=["Global"])
 async def home_page():
     script_path = get_script_directory()
-    html_path = path.join(script_path, "index.html")
+    html_path = path.join(script_path, "..", "dist", "index.html")
+
+    if not path.exists(html_path):
+        return HTMLResponse(content="<h1>Run `npm run build` first</h1>", status_code=503)
 
     with open(html_path, "r") as html_file:
         html_content = html_file.read()

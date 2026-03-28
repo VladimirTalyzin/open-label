@@ -115,3 +115,10 @@ button.selected-label-button
 {
     padding: 0.35rem 0.5rem;
 }
+
+/* Skeleton annotation */
+.skeleton-tool-active
+{
+    border: 2px solid #333;
+    border-radius: 4px;
+}

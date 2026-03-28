@@ -12,8 +12,8 @@ from datetime import datetime
 from io import BytesIO
 from re import findall, match
 
-from fastapi import FastAPI, Form, HTTPException, UploadFile, File, Query, Path
-from fastapi.responses import HTMLResponse, JSONResponse, StreamingResponse, FileResponse, Response
+from fastapi import FastAPI, Form, HTTPException, UploadFile, File, Query, Path, Request, Cookie
+from fastapi.responses import HTMLResponse, JSONResponse, StreamingResponse, FileResponse, Response, RedirectResponse
 from fastapi.staticfiles import StaticFiles
 from os import listdir, path, makedirs, remove
 from json import dump, load, loads
@@ -23,6 +23,15 @@ from fastapi.middleware.cors import CORSMiddleware
 from settings import PREVIEW_WIDTH, API_PORT
 
 from utility import transliterate, safe_move
+from database import (
+    init_db, create_session, get_user_by_session, delete_session,
+    create_group, get_all_groups, delete_group,
+    create_user, get_all_users, delete_user, update_user_password, update_user_group,
+    assign_project_to_group, get_project_group, get_group_project_ids, remove_project_group,
+    hash_password
+)
+
+init_db()
 
 app = FastAPI(title="Open Label API", docs_url="/docs")
 
@@ -49,6 +58,187 @@ if path.exists(dist_dir):
     app.mount("/assets", StaticFiles(directory=join_path(dist_dir, "assets")), name="assets")
 
 
+# --- Auth helpers ---
+
+def get_admin_password():
+    admin_file = join_path(get_script_directory(), "admin_password.txt")
+    if not path.exists(admin_file):
+        return "admin"
+    with open(admin_file, "r") as f:
+        return f.read().strip()
+
+
+def get_current_user(request: Request):
+    token = request.cookies.get("session_token")
+    return get_user_by_session(token)
+
+
+def require_user(request: Request):
+    user = get_current_user(request)
+    if not user:
+        raise HTTPException(status_code=401, detail="Not authenticated")
+    return user
+
+
+def require_admin(request: Request):
+    token = request.cookies.get("admin_token")
+    if token != "admin_authenticated":
+        raise HTTPException(status_code=401, detail="Admin access required")
+
+
+def user_can_access_project(user, project_id):
+    project_group = get_project_group(project_id)
+    if project_group is None:
+        return True
+    return project_group == user["group_id"]
+
+
+# --- Auth endpoints ---
+
+@app.post("/auth/login", tags=["Auth"])
+async def login(username: str = Form(...), password: str = Form(...)):
+    token, user = create_session(username, password)
+    if not token:
+        raise HTTPException(status_code=401, detail="Invalid username or password")
+
+    response = JSONResponse(content={
+        "result": "ok",
+        "user": {"id": user["id"], "username": user["username"], "group_id": user["group_id"]}
+    })
+    response.set_cookie(key="session_token", value=token, httponly=True, samesite="lax")
+    return response
+
+
+@app.get("/auth/logout", tags=["Auth"])
+async def logout(request: Request):
+    token = request.cookies.get("session_token")
+    if token:
+        delete_session(token)
+    response = JSONResponse(content={"result": "ok"})
+    response.delete_cookie("session_token")
+    response.delete_cookie("admin_token")
+    return response
+
+
+@app.get("/auth/me", tags=["Auth"])
+async def me(request: Request):
+    user = get_current_user(request)
+    if not user:
+        raise HTTPException(status_code=401, detail="Not authenticated")
+    return JSONResponse(content={
+        "user": {
+            "id": user["id"],
+            "username": user["username"],
+            "group_id": user["group_id"],
+            "group_name": user.get("group_name", "")
+        }
+    })
+
+
+# --- Admin endpoints ---
+
+@app.post("/admin/login", tags=["Admin"])
+async def admin_login(password: str = Form(...)):
+    if password != get_admin_password():
+        raise HTTPException(status_code=401, detail="Invalid admin password")
+    response = JSONResponse(content={"result": "ok"})
+    response.set_cookie(key="admin_token", value="admin_authenticated", httponly=True, samesite="lax")
+    return response
+
+
+@app.get("/admin/logout", tags=["Admin"])
+async def admin_logout():
+    response = JSONResponse(content={"result": "ok"})
+    response.delete_cookie("admin_token")
+    return response
+
+
+@app.get("/admin/groups", tags=["Admin"])
+async def admin_get_groups(request: Request):
+    require_admin(request)
+    groups = get_all_groups()
+    return JSONResponse(content={"groups": [dict(g) for g in groups]})
+
+
+@app.post("/admin/groups", tags=["Admin"])
+async def admin_create_group(request: Request, name: str = Form(...)):
+    require_admin(request)
+    try:
+        group = create_group(name)
+        return JSONResponse(content={"result": "ok", "group": dict(group)})
+    except Exception as e:
+        raise HTTPException(status_code=400, detail=str(e))
+
+
+@app.post("/admin/groups/delete", tags=["Admin"])
+async def admin_delete_group(request: Request, group_id: int = Form(...)):
+    require_admin(request)
+    success = delete_group(group_id)
+    if not success:
+        raise HTTPException(status_code=400, detail="Cannot delete group with users. Remove users first.")
+    return JSONResponse(content={"result": "ok"})
+
+
+@app.get("/admin/users", tags=["Admin"])
+async def admin_get_users(request: Request):
+    require_admin(request)
+    users = get_all_users()
+    return JSONResponse(content={"users": [dict(u) for u in users]})
+
+
+@app.post("/admin/users", tags=["Admin"])
+async def admin_create_user(request: Request, username: str = Form(...), password: str = Form(...), group_id: int = Form(...)):
+    require_admin(request)
+    try:
+        user = create_user(username, password, group_id)
+        return JSONResponse(content={"result": "ok", "user": dict(user)})
+    except Exception as e:
+        raise HTTPException(status_code=400, detail=str(e))
+
+
+@app.post("/admin/users/delete", tags=["Admin"])
+async def admin_delete_user(request: Request, user_id: int = Form(...)):
+    require_admin(request)
+    delete_user(user_id)
+    return JSONResponse(content={"result": "ok"})
+
+
+@app.post("/admin/users/password", tags=["Admin"])
+async def admin_update_password(request: Request, user_id: int = Form(...), password: str = Form(...)):
+    require_admin(request)
+    update_user_password(user_id, password)
+    return JSONResponse(content={"result": "ok"})
+
+
+@app.post("/admin/users/group", tags=["Admin"])
+async def admin_update_user_group(request: Request, user_id: int = Form(...), group_id: int = Form(...)):
+    require_admin(request)
+    update_user_group(user_id, group_id)
+    return JSONResponse(content={"result": "ok"})
+
+
+@app.post("/admin/project_group", tags=["Admin"])
+async def admin_set_project_group(request: Request, project_id: int = Form(...), group_id: int = Form(...)):
+    require_admin(request)
+    remove_project_group(project_id)
+    assign_project_to_group(project_id, group_id)
+    return JSONResponse(content={"result": "ok"})
+
+
+@app.get("/admin/project_groups", tags=["Admin"])
+async def admin_get_project_groups(request: Request):
+    require_admin(request)
+    from database import get_connection
+    conn = get_connection()
+    try:
+        rows = conn.execute("SELECT project_id, group_id FROM project_groups ORDER BY project_id").fetchall()
+        return JSONResponse(content={"project_groups": [dict(r) for r in rows]})
+    finally:
+        conn.close()
+
+
+# --- Pages ---
+
 @app.get("/", response_class=HTMLResponse, tags=["Global"])
 async def home_page():
     script_path = get_script_directory()
@@ -63,7 +253,9 @@ async def home_page():
 
 
 @app.get("/add_project", tags=["Global"])
-async def add_project():
+async def add_project(request: Request):
+    user = require_user(request)
+
     script_path = get_script_directory()
     project_path = join_path(script_path, "projects")
 
@@ -84,7 +276,9 @@ async def add_project():
     with open(settings_file, "w") as file_settings:
         dump(create_project_data(new_project_id, []), file_settings)
 
-    return await get_projects_list()
+    assign_project_to_group(new_project_id, user["group_id"])
+
+    return await get_projects_list(request)
 
 
 def create_project_data(new_project_id: int, images: list):
@@ -109,16 +303,23 @@ def load_project_data(project_path):
 
 
 @app.get("/get_projects_list", tags=["Global"])
-async def get_projects_list():
+async def get_projects_list(request: Request):
+    user = require_user(request)
+
     script_path = get_script_directory()
     projects_path = join_path(script_path, "projects")
 
     if not path.exists(projects_path):
         makedirs(projects_path)
 
+    allowed_ids = set(get_group_project_ids(user["group_id"]))
+
     projects_list = []
     for entry in listdir(projects_path):
         if entry.isdigit():
+            project_id = int(entry)
+            if allowed_ids and project_id not in allowed_ids:
+                continue
             project_path = join_path(projects_path, entry)
             project_data = load_project_data(project_path)
             if project_data:
@@ -130,7 +331,11 @@ async def get_projects_list():
 
 
 @app.get("/get_project_data/{id_project}", tags=["Project"])
-async def get_project_data(id_project: int):
+async def get_project_data(id_project: int, request: Request):
+    user = require_user(request)
+    if not user_can_access_project(user, id_project):
+        raise HTTPException(status_code=403, detail="Access denied")
+
     script_path = get_script_directory()
     project_path = join_path(script_path, "projects", str(id_project))
 
@@ -777,7 +982,11 @@ async def get_preview(id_project: int):
 
 
 @app.get("/delete_project/{id_project}", tags=["Project"])
-async def delete_project(id_project: int):
+async def delete_project(id_project: int, request: Request):
+    user = require_user(request)
+    if not user_can_access_project(user, id_project):
+        raise HTTPException(status_code=403, detail="Access denied")
+
     script_path = get_script_directory()
     project_path = join_path(script_path, "projects", str(id_project))
 
@@ -793,6 +1002,7 @@ async def delete_project(id_project: int):
     deleted_project_path = join_path(deleted_projects_path, deleted_project_name)
 
     safe_move(project_path, deleted_project_path)
+    remove_project_group(id_project)
 
     return JSONResponse(content={"result": "ok", "message": "Project deleted successfully"})
 
@@ -984,6 +1194,106 @@ async def predict_with_crop(
         final_buffer,
         media_type='image/png'
     )
+
+
+@app.post("/set_project_type", tags=["Project"])
+async def set_project_type_endpoint(id_project: int = Form(...), project_type: str = Form(...)):
+    try:
+        return await set_project_property(id_project, "project_type", project_type)
+    except Exception as exception:
+        raise HTTPException(status_code=500, detail=f"Error updating project type: {exception}")
+
+
+@app.post("/set_skeleton_template/{id_project}", tags=["Project"])
+async def set_skeleton_template(id_project: int, json_data: str = Form(...)):
+    try:
+        skeleton_data = loads(json_data)
+        return await set_project_property(id_project, "skeleton_template", skeleton_data)
+    except Exception as exception:
+        raise HTTPException(status_code=500, detail=f"Error saving skeleton template: {exception}")
+
+
+@app.get("/get_skeleton_data/{id_project}/{image_name}", tags=["Skeleton"])
+async def get_skeleton_data(id_project: int, image_name: str):
+    script_path = get_script_directory()
+    project_path = join_path(script_path, "projects", str(id_project))
+
+    if not path.exists(project_path):
+        raise HTTPException(status_code=404, detail="Project not found")
+
+    image_name = transliterate(path.basename(image_name))
+    skeleton_file = join_path(project_path, "skeletons", f"{image_name}.json")
+
+    if not path.exists(skeleton_file):
+        return JSONResponse(content={"skeletons": []})
+
+    with open(skeleton_file, "r", encoding="utf-8") as f:
+        data = load(f)
+
+    return JSONResponse(content={"skeletons": data})
+
+
+@app.post("/upload_skeleton_data/{id_project}/{image_name}", tags=["Skeleton"])
+async def upload_skeleton_data(id_project: int, image_name: str, json_data: str = Form(...)):
+    script_path = get_script_directory()
+    project_path = join_path(script_path, "projects", str(id_project))
+
+    if not path.exists(project_path):
+        raise HTTPException(status_code=404, detail="Project not found")
+
+    skeleton_dir = join_path(project_path, "skeletons")
+    if not path.exists(skeleton_dir):
+        makedirs(skeleton_dir)
+
+    image_name = transliterate(path.basename(image_name))
+    skeleton_file = join_path(skeleton_dir, f"{image_name}.json")
+
+    try:
+        data = loads(json_data)
+        with open(skeleton_file, "w", encoding="utf-8") as f:
+            dump(data, f, ensure_ascii=False, indent=4)
+        return JSONResponse(content={"result": "ok", "message": "Skeleton data saved"})
+    except Exception as exception:
+        raise HTTPException(status_code=500, detail=f"Error saving skeleton data: {exception}")
+
+
+@app.get("/get_skeleton_mask/{id_project}/{image_name}", tags=["Skeleton"])
+async def get_skeleton_mask(id_project: int, image_name: str):
+    script_path = get_script_directory()
+    project_path = join_path(script_path, "projects", str(id_project))
+
+    if not path.exists(project_path):
+        raise HTTPException(status_code=404, detail="Project not found")
+
+    image_name = transliterate(path.basename(image_name))
+    mask_path = join_path(project_path, "skeleton_masks", f"{image_name}.png")
+
+    if not path.exists(mask_path):
+        raise HTTPException(status_code=404, detail="Mask not found")
+
+    return FileResponse(mask_path, media_type="image/png")
+
+
+@app.post("/upload_skeleton_mask/{id_project}/{image_name}", tags=["Skeleton"])
+async def upload_skeleton_mask(id_project: int, image_name: str, image: UploadFile = File(...)):
+    script_path = get_script_directory()
+    project_path = join_path(script_path, "projects", str(id_project))
+
+    if not path.exists(project_path):
+        raise HTTPException(status_code=404, detail="Project not found")
+
+    masks_dir = join_path(project_path, "skeleton_masks")
+    if not path.exists(masks_dir):
+        makedirs(masks_dir)
+
+    image_name = transliterate(path.basename(image_name))
+    mask_path = join_path(masks_dir, f"{image_name}.png")
+
+    contents = await image.read()
+    with open(mask_path, "wb") as f:
+        f.write(contents)
+
+    return JSONResponse(content={"result": "ok"})
 
 
 if __name__ == "__main__":

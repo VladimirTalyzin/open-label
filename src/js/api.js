@@ -63,6 +63,11 @@ export function request(command, parameters, onLoad, onError, isPost, button)
             {
                 return response.json()
             }
+            else if (response.status === 401)
+            {
+                window.location.reload()
+                throw new Error("Not authenticated")
+            }
             else
             {
                 if (typeof onError === "function")

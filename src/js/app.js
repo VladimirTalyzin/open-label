@@ -4,18 +4,41 @@ import "../css/style.css"
 import {request} from "./api.js"
 import {addEventListenerWithId} from "./events.js"
 import {updateProjects} from "./project.js"
+import {checkAuth, showMainApp, setupLoginHandlers, showLogin} from "./auth.js"
 
 addEventListenerWithId(document, "DOMContentLoaded", "startup", () =>
 {
+    setupLoginHandlers((user) =>
+    {
+        showApp(user)
+    })
+
+    checkAuth((user) =>
+    {
+        showApp(user)
+    })
+})
+
+function showApp(user)
+{
+    showMainApp()
+
+    const userInfo = document.getElementById("user-info")
+    userInfo.textContent = `${user.username} (${user.group_name || "group " + user.group_id})`
+
     request(
         "get_projects_list",
         null,
         (responseJson) =>
         {
-            updateProjects(responseJson)
+            updateProjects(responseJson, true)
         },
         (errorText) =>
         {
+            if (errorText === "HTTP status != 200")
+            {
+                showLogin()
+            }
             console.log(errorText)
         },
         false
@@ -28,7 +51,7 @@ addEventListenerWithId(document, "DOMContentLoaded", "startup", () =>
             null,
             (responseJson) =>
             {
-                updateProjects(responseJson)
+                updateProjects(responseJson, true)
             },
             (errorText) =>
             {
@@ -38,4 +61,4 @@ addEventListenerWithId(document, "DOMContentLoaded", "startup", () =>
             addProjectButton
         )
     )
-})
+}

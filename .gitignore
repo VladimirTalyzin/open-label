@@ -22,3 +22,5 @@ Thumbs.db
 
 # App data
 server/projects/
+/server/admin_password.txt
+/server/openlabel.db

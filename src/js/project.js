@@ -9,6 +9,8 @@ import {renderVectorData, getRectangleHandles, pointInRect, resizeRectangle} fro
 import {
     getActiveLabel, getColor, activateLabel, checkUnsaveAndSave, saveLabelData, predictObjects
 } from "./labels.js"
+import {createSkeletonTab, initSkeletonTabHandler} from "./skeletonTab.js"
+import {setupSkeletonMode} from "./skeletonTools.js"
 
 export function updateProject(idProject)
 {
@@ -96,6 +98,11 @@ export function updateProjects(responseJson, clear)
         settingsButton.textContent = "Settings"
         settingsLi.appendChild(settingsButton)
 
+        const skeletonTab = createSkeletonTab(project)
+        const skeletonLi = skeletonTab.li
+        const skeletonButton = skeletonTab.button
+        const skeletonDiv = skeletonTab.div
+
         const tabContentWrapper = document.createElement("div")
         tabContentWrapper.classList.add("project-tab-content")
         tabContentWrapper.style.display = "none"
@@ -129,6 +136,59 @@ export function updateProjects(responseJson, clear)
         settingsDiv.classList.add("text-center")
         settingsDiv.id = "project-settings"
         settingsDiv.style.display = "none"
+
+        const projectTypeDiv = document.createElement("div")
+        projectTypeDiv.classList.add("mb-3")
+        projectTypeDiv.style.textAlign = "left"
+
+        const typeLabel = document.createElement("label")
+        typeLabel.textContent = "Project Type: "
+        typeLabel.classList.add("form-label", "me-2")
+
+        const typeSelect = document.createElement("select")
+        typeSelect.classList.add("form-select", "form-select-sm", "d-inline-block")
+        typeSelect.style.width = "200px"
+
+        const optSeg = document.createElement("option")
+        optSeg.value = "segmentation"
+        optSeg.textContent = "Segmentation"
+
+        const optSkel = document.createElement("option")
+        optSkel.value = "yolo-skeleton"
+        optSkel.textContent = "YOLO Skeleton"
+
+        typeSelect.appendChild(optSeg)
+        typeSelect.appendChild(optSkel)
+        typeSelect.value = project.project_type || "segmentation"
+
+        addEventListenerWithId(typeSelect, "change", "project_type_change", () =>
+        {
+            const formData = new FormData()
+            formData.append("id_project", project.id_project)
+            formData.append("project_type", typeSelect.value)
+            fetch("/set_project_type", {method: "POST", body: formData})
+                .then(r => r.json())
+                .then(resp =>
+                {
+                    if (resp.result === "ok")
+                    {
+                        project.project_type = typeSelect.value
+                        skeletonLi.style.display = typeSelect.value === "yolo-skeleton" ? "" : "none"
+                        labelsLi.style.display = typeSelect.value === "yolo-skeleton" ? "none" : ""
+                        typeSelect.style.borderColor = "green"
+                        typeSelect.style.borderWidth = "3px"
+                        setTimeout(() =>
+                        {
+                            typeSelect.style.borderColor = ""
+                            typeSelect.style.borderWidth = ""
+                        }, 1000)
+                    }
+                })
+        })
+
+        projectTypeDiv.appendChild(typeLabel)
+        projectTypeDiv.appendChild(typeSelect)
+        settingsDiv.appendChild(projectTypeDiv)
 
         const predictionUrlInput = document.createElement("input")
         predictionUrlInput.type = "text"
@@ -166,12 +226,17 @@ export function updateProjects(responseJson, clear)
         projectCardBody.appendChild(projectUuid)
         projectCardBody.appendChild(projectNameInput)
         projectCardBody.appendChild(imagesCount)
+        const isYoloSkeleton = (project.project_type || "segmentation") === "yolo-skeleton"
+        labelsLi.style.display = isYoloSkeleton ? "none" : ""
+
         projectButtons.appendChild(imagesLi)
-        projectButtons.appendChild(labelsLi)
         projectButtons.appendChild(settingsLi)
+        projectButtons.appendChild(labelsLi)
+        projectButtons.appendChild(skeletonLi)
         tabContentWrapper.appendChild(imagesDiv)
         tabContentWrapper.appendChild(labelsDiv)
         tabContentWrapper.appendChild(settingsDiv)
+        tabContentWrapper.appendChild(skeletonDiv)
         projectCard.appendChild(projectCardBody)
         projectCard.appendChild(projectButtons)
         projectCard.appendChild(tabContentWrapper)
@@ -181,7 +246,8 @@ export function updateProjects(responseJson, clear)
         const tabMap = [
             {button: imagesButton, div: imagesDiv},
             {button: labelsButton, div: labelsDiv},
-            {button: settingsButton, div: settingsDiv}
+            {button: settingsButton, div: settingsDiv},
+            {button: skeletonButton, div: skeletonDiv}
         ]
 
         const showContent = (currentBlock, onFirstOpen = null, onOpen = null) =>
@@ -191,6 +257,7 @@ export function updateProjects(responseJson, clear)
             imagesDiv.style.display = "none"
             labelsDiv.style.display = "none"
             settingsDiv.style.display = "none"
+            skeletonDiv.style.display = "none"
 
             tabMap.forEach(t => t.button.classList.remove("active"))
 
@@ -378,748 +445,14 @@ export function updateProjects(responseJson, clear)
                                     zoomOutButton.classList.add("btn", "btn-sm", "btn-secondary", "me-4")
                                     zoomOutButton.textContent = "\uD83D\uDD0D\uFE0F\u2796"
 
+                                    const projectType = project.project_type || "segmentation"
+                                    let skeletonCleanup = null
+
                                     const saveButton = document.createElement("button")
                                     saveButton.classList.add("btn", "btn-sm", "btn-secondary", "ms-3")
                                     saveButton.textContent = "\uD83D\uDCBE"
                                     saveButton.disabled = true
                                     saveButton.title = "Auto-save enabled"
-
-                                    let intervalId = null
-
-                                    const handleSave = () =>
-                                    {
-                                        if (!imagesDiv || !document.body.contains(imagesDiv))
-                                        {
-                                            clearInterval(intervalId)
-                                        }
-                                        else if (imageCardDiv.hasAttribute("active_label"))
-                                        {
-                                            const label = imageCardDiv.getAttribute("active_label")
-                                            if (label !== "")
-                                            {
-                                                checkUnsaveAndSave(
-                                                    imageBlock,
-                                                    saveButton,
-                                                    project.id_project,
-                                                    image.image,
-                                                    label,
-                                                    () =>
-                                                    {
-                                                        saveButton.disabled = true
-                                                    },
-                                                    (error) =>
-                                                    {
-                                                        console.warn(error)
-                                                    }
-                                                )
-                                            }
-                                        }
-                                    }
-
-                                    addEventListenerWithId(saveButton, "click", "save_masks", handleSave)
-
-                                    const checkAndSave = () =>
-                                    {
-                                        if (!saveButton.disabled)
-                                        {
-                                            handleSave()
-                                        }
-                                    }
-
-                                    intervalId = setInterval(checkAndSave, 15000)
-
-                                    const clearCanvasButton = document.createElement("button")
-                                    clearCanvasButton.classList.add("btn", "btn-sm", "btn-secondary", "ms-3")
-                                    clearCanvasButton.textContent = "\u238A"
-                                    clearCanvasButton.disabled = true
-                                    clearCanvasButton.title = "Clear canvas"
-                                    addEventListenerWithId(clearCanvasButton, "click", "clear_canvas", () =>
-                                    {
-                                        const pngCanvas = getPngCanvas(imageBlock, fullImage, fullImageContainer)
-                                        if (pngCanvas)
-                                        {
-                                            clearCanvas(pngCanvas)
-                                            setPngCanvasUnsaved(pngCanvas, saveButton, clearCanvasButton)
-                                        }
-                                    })
-
-                                    // --- Brush ---
-                                    const brushButton = document.createElement("button")
-                                    brushButton.classList.add("btn", "btn-sm", "btn-secondary", "me-1")
-                                    brushButton.innerHTML = "\uD83D\uDD8C\uFE0F"
-                                    addEventListenerWithId(brushButton, "click", "brush_mode", () =>
-                                    {
-                                        getActiveLabel(imageCardDiv, (activeLabel) =>
-                                        {
-                                            const labelColor = getColor(activeLabel, project.labels)
-                                            const vectorCanvas = getVectorCanvas(imageBlock, fullImage, fullImageContainer, true)
-                                            const pngCanvas = getPngCanvas(imageBlock, fullImage, fullImageContainer, false)
-
-                                            let brushSlider = document.getElementById("brush_slider")
-
-                                            blockButtons(brushButton, "brush_mode", () =>
-                                            {
-                                                brushSlider.remove()
-                                                hideLabelButtons(labelButtons, activeLabel, false)
-                                                removeEventListenerWithId(pngCanvas, "brush_mouse_down")
-                                                removeEventListenerWithId(pngCanvas, "brush_mouse_move")
-                                                removeEventListenerWithId(pngCanvas, "brush_mouse_up")
-                                            })
-
-                                            hideLabelButtons(labelButtons, activeLabel, true)
-                                            activateCanvas(pngCanvas, vectorCanvas, true)
-
-                                            const getMouseCoords = (event) => getMouseCoordinatesCanvas(event, pngCanvas)
-
-                                            if (!brushSlider)
-                                            {
-                                                brushSlider = document.createElement("input")
-                                                brushSlider.type = "range"
-                                                brushSlider.min = "1"
-                                                brushSlider.max = "50"
-                                                brushSlider.value = getInitialSliderValue(brushButton, "data-brush-size", "10")
-                                                brushSlider.title = "Brush size"
-                                                brushSlider.id = "brush_slider"
-                                                brushSlider.className = "me-1"
-                                                brushButton.parentNode.insertBefore(brushSlider, brushButton.nextSibling)
-                                            }
-
-                                            let isPainting = false
-                                            let brushSize = parseInt(brushSlider.value, 10)
-                                            brushSlider.addEventListener("input", () =>
-                                            {
-                                                brushSize = parseInt(brushSlider.value, 10)
-                                                setSliderValue(brushButton, "data-brush-size", brushSize)
-                                            })
-
-                                            const ctx = pngCanvas.getContext("2d")
-                                            let prevX = null, prevY = null
-
-                                            addEventListenerWithId(pngCanvas, "mousedown", "brush_mouse_down", (event) =>
-                                            {
-                                                const {mouse_x, mouse_y} = getMouseCoords(event)
-                                                isPainting = true
-                                                prevX = mouse_x
-                                                prevY = mouse_y
-                                                paintCircle(ctx, mouse_x, mouse_y, brushSize, labelColor)
-                                            })
-
-                                            addEventListenerWithId(pngCanvas, "mousemove", "brush_mouse_move", (event) =>
-                                            {
-                                                if (!isPainting)
-                                                {
-                                                    return
-                                                }
-                                                const {mouse_x, mouse_y} = getMouseCoords(event)
-                                                paintCircle(ctx, mouse_x, mouse_y, brushSize, labelColor, prevX, prevY)
-                                                prevX = mouse_x
-                                                prevY = mouse_y
-                                            })
-
-                                            addEventListenerWithId(pngCanvas, "mouseup", "brush_mouse_up", () =>
-                                            {
-                                                isPainting = false
-                                                prevX = null
-                                                prevY = null
-                                                saveLabelData(project.id_project, image.image, activeLabel, imageBlock, () =>
-                                                {
-                                                }, () =>
-                                                {
-                                                }, "png")
-                                            })
-                                        })
-                                    })
-
-                                    // --- Eraser ---
-                                    const eraserButton = document.createElement("button")
-                                    eraserButton.classList.add("btn", "btn-sm", "btn-secondary", "me-1")
-                                    eraserButton.innerHTML = "\uD83E\uDDFD"
-                                    addEventListenerWithId(eraserButton, "click", "eraser_mode", () =>
-                                    {
-                                        getActiveLabel(imageCardDiv, (activeLabel) =>
-                                        {
-                                            const vectorCanvas = getVectorCanvas(imageBlock, fullImage, fullImageContainer, true)
-                                            const pngCanvas = getPngCanvas(imageBlock, fullImage, fullImageContainer, false)
-
-                                            let eraserSlider = document.getElementById("eraser_slider")
-
-                                            blockButtons(eraserButton, "eraser_mode", () =>
-                                            {
-                                                eraserSlider.remove()
-                                                hideLabelButtons(labelButtons, activeLabel, false)
-                                                removeEventListenerWithId(pngCanvas, "eraser_mouse_down")
-                                                removeEventListenerWithId(pngCanvas, "eraser_mouse_move")
-                                                removeEventListenerWithId(pngCanvas, "eraser_mouse_up")
-                                            })
-
-                                            hideLabelButtons(labelButtons, activeLabel, true)
-                                            activateCanvas(pngCanvas, vectorCanvas, true)
-
-                                            const getMouseCoords = (event) => getMouseCoordinatesCanvas(event, pngCanvas)
-
-                                            if (!eraserSlider)
-                                            {
-                                                eraserSlider = document.createElement("input")
-                                                eraserSlider.type = "range"
-                                                eraserSlider.min = "1"
-                                                eraserSlider.max = "50"
-                                                eraserSlider.value = getInitialSliderValue(eraserButton, "data-eraser-size", "10")
-                                                eraserSlider.title = "Eraser size"
-                                                eraserSlider.id = "eraser_slider"
-                                                eraserSlider.className = "me-1"
-                                                eraserButton.parentNode.insertBefore(eraserSlider, eraserButton.nextSibling)
-                                            }
-
-                                            let isErasing = false
-                                            let eraserSize = parseInt(eraserSlider.value, 10)
-                                            eraserSlider.addEventListener("input", () =>
-                                            {
-                                                eraserSize = parseInt(eraserSlider.value, 10)
-                                                setSliderValue(eraserButton, "data-eraser-size", eraserSize)
-                                            })
-
-                                            const ctx = pngCanvas.getContext("2d")
-                                            let prevX = null, prevY = null
-
-                                            addEventListenerWithId(pngCanvas, "mousedown", "eraser_mouse_down", (event) =>
-                                            {
-                                                const {mouse_x, mouse_y} = getMouseCoords(event)
-                                                isErasing = true
-                                                prevX = mouse_x
-                                                prevY = mouse_y
-                                                eraseCircle(ctx, mouse_x, mouse_y, eraserSize)
-                                            })
-
-                                            addEventListenerWithId(pngCanvas, "mousemove", "eraser_mouse_move", (event) =>
-                                            {
-                                                if (!isErasing)
-                                                {
-                                                    return
-                                                }
-                                                const {mouse_x, mouse_y} = getMouseCoords(event)
-                                                eraseCircle(ctx, mouse_x, mouse_y, eraserSize, prevX, prevY)
-                                                prevX = mouse_x
-                                                prevY = mouse_y
-                                            })
-
-                                            addEventListenerWithId(pngCanvas, "mouseup", "eraser_mouse_up", () =>
-                                            {
-                                                isErasing = false
-                                                prevX = null
-                                                prevY = null
-                                                saveLabelData(project.id_project, image.image, activeLabel, imageBlock, () =>
-                                                {
-                                                }, () =>
-                                                {
-                                                }, "png")
-                                            })
-                                        })
-                                    })
-
-                                    // --- Anti-label ---
-                                    const antiLabelButton = document.createElement("button")
-                                    antiLabelButton.classList.add("btn", "btn-sm", "btn-secondary", "me-4")
-                                    antiLabelButton.innerHTML = "\uD83D\uDEAB"
-                                    antiLabelButton.title = "AntiLabel"
-                                    addEventListenerWithId(antiLabelButton, "click", "anti_label_mode", () =>
-                                        getActiveLabel(imageCardDiv, (activeLabel) =>
-                                        {
-                                            const labelColor = getColor(activeLabel, project.labels)
-                                            const vectorCanvas = getVectorCanvas(imageBlock, fullImage, fullImageContainer, true)
-                                            const pngCanvas = getPngCanvas(imageBlock, fullImage, fullImageContainer, false)
-
-                                            blockButtons(antiLabelButton, "anti_label_mode", () =>
-                                            {
-                                                removeEventListenerWithId(vectorCanvas, "anti_label_mouse_down")
-                                                removeEventListenerWithId(vectorCanvas, "anti_label_mouse_move")
-                                                removeEventListenerWithId(vectorCanvas, "anti_label_mouse_up")
-                                                removeEventListenerWithId(vectorCanvas, "anti_label_double_click")
-                                            })
-
-                                            activateCanvas(pngCanvas, vectorCanvas, false)
-
-                                            if (vectorCanvas)
-                                            {
-                                                let isDrawing = false
-                                                let currentRect = null
-                                                let startX = 0, startY = 0
-                                                let vectorData = []
-
-                                                const saveVectorData = () =>
-                                                {
-                                                    if (vectorData.length > 0)
-                                                    {
-                                                        vectorCanvas.setAttribute("vector_data", JSON.stringify(vectorData))
-                                                    }
-                                                    else
-                                                    {
-                                                        vectorCanvas.removeAttribute("vector_data")
-                                                    }
-                                                    saveLabelData(project.id_project, image.image, activeLabel, imageBlock, () =>
-                                                    {
-                                                    }, () =>
-                                                    {
-                                                    }, "vector")
-                                                }
-
-                                                const getMouseCoords = (event) => getMouseCoordinatesCanvas(event, vectorCanvas)
-
-                                                const vectorDataJson = vectorCanvas.getAttribute("vector_data")
-                                                if (vectorDataJson)
-                                                {
-                                                    vectorData = JSON.parse(vectorDataJson)
-                                                }
-
-                                                addEventListenerWithId(vectorCanvas, "mousedown", "anti_label_mouse_down", (event) =>
-                                                {
-                                                    const {mouse_x, mouse_y} = getMouseCoords(event)
-
-                                                    for (const shape of vectorData)
-                                                    {
-                                                        if (shape.type === "anti-rectangle")
-                                                        {
-                                                            const handles = getRectangleHandles(shape)
-                                                            for (const handle of handles)
-                                                            {
-                                                                if (pointInRect(mouse_x, mouse_y, handle.x, handle.y, handle.size, handle.size))
-                                                                {
-                                                                    isDrawing = true
-                                                                    currentRect = shape
-                                                                    currentRect.resizing = true
-                                                                    currentRect.resize_handle = handle.position
-                                                                    return
-                                                                }
-                                                            }
-                                                        }
-                                                    }
-
-                                                    for (const shape of vectorData)
-                                                    {
-                                                        if (shape.type === "anti-rectangle")
-                                                        {
-                                                            if (pointInRect(mouse_x, mouse_y, shape.x, shape.y, shape.width, shape.height))
-                                                            {
-                                                                return
-                                                            }
-                                                        }
-                                                    }
-
-                                                    isDrawing = true
-                                                    startX = mouse_x
-                                                    startY = mouse_y
-                                                    currentRect = {
-                                                        type: "anti-rectangle",
-                                                        x: startX,
-                                                        y: startY,
-                                                        width: 0,
-                                                        height: 0,
-                                                        color: labelColor,
-                                                        lineWidth: 2
-                                                    }
-                                                    vectorData.push(currentRect)
-                                                })
-
-                                                addEventListenerWithId(vectorCanvas, "mousemove", "anti_label_mouse_move", (event) =>
-                                                {
-                                                    if (!isDrawing || !currentRect)
-                                                    {
-                                                        return
-                                                    }
-                                                    const {mouse_x, mouse_y} = getMouseCoords(event)
-
-                                                    if (currentRect.resizing)
-                                                    {
-                                                        resizeRectangle(currentRect, mouse_x, mouse_y)
-                                                    }
-                                                    else
-                                                    {
-                                                        currentRect.width = mouse_x - startX
-                                                        currentRect.height = mouse_y - startY
-                                                    }
-                                                    renderVectorData(vectorData, vectorCanvas)
-                                                })
-
-                                                addEventListenerWithId(vectorCanvas, "mouseup", "anti_label_mouse_up", () =>
-                                                {
-                                                    if (isDrawing)
-                                                    {
-                                                        isDrawing = false
-                                                        if (currentRect)
-                                                        {
-                                                            currentRect.resizing = false
-                                                            currentRect.resize_handle = null
-                                                            currentRect = null
-                                                        }
-
-                                                        vectorData = vectorData.filter((shape) =>
-                                                        {
-                                                            if (shape.type === "anti-rectangle")
-                                                            {
-                                                                return shape.width > 1 && shape.height > 1
-                                                            }
-                                                            return true
-                                                        })
-
-                                                        saveVectorData()
-                                                    }
-                                                })
-
-                                                addEventListenerWithId(vectorCanvas, "dblclick", "anti_label_double_click", (event) =>
-                                                {
-                                                    const {mouse_x, mouse_y} = getMouseCoords(event)
-
-                                                    for (let i = 0; i < vectorData.length; i++)
-                                                    {
-                                                        const shape = vectorData[i]
-                                                        if (shape.type === "anti-rectangle")
-                                                        {
-                                                            if (pointInRect(mouse_x, mouse_y, shape.x, shape.y, shape.width, shape.height))
-                                                            {
-                                                                vectorData.splice(i, 1)
-                                                                renderVectorData(vectorData, vectorCanvas)
-                                                                saveVectorData()
-                                                                return
-                                                            }
-                                                        }
-                                                    }
-                                                })
-                                            }
-                                        })
-                                    )
-
-                                    // --- Undo ---
-                                    const undoButton = document.createElement("button")
-                                    undoButton.classList.add("btn", "btn-sm", "btn-secondary", "me-4")
-                                    undoButton.innerHTML = "\u21B6"
-                                    undoButton.title = "Undo"
-                                    addEventListenerWithId(undoButton, "click", "undo_button", () =>
-                                        getActiveLabel(imageCardDiv, (activeLabel) =>
-                                        {
-                                            blockButtons(null)
-                                            const undoUrl = `/undo_png_mask/${project.id_project}/${encodeURIComponent(image.image)}/${encodeURIComponent(activeLabel)}`
-
-                                            fetch(undoUrl, {cache: "no-store"})
-                                                .then((response) =>
-                                                {
-                                                    if (!response.ok)
-                                                    {
-                                                        return response.json().then((err) =>
-                                                        {
-                                                            throw new Error(err.detail || "Unknown error during Undo operation")
-                                                        }).catch(() =>
-                                                        {
-                                                            throw new Error("Unknown error during Undo operation")
-                                                        })
-                                                    }
-                                                    return response.json()
-                                                })
-                                                .then((data) =>
-                                                {
-                                                    if (data.result === "ok")
-                                                    {
-                                                        clearCanvas(getPngCanvas(imageBlock, fullImage, fullImageContainer))
-                                                        activateLabel(
-                                                            project.id_project, image.image, activeLabel,
-                                                            imageBlock, fullImage, fullImageContainer,
-                                                            project.labels, clearCanvasButton,
-                                                            () =>
-                                                            {
-                                                            },
-                                                            (error) =>
-                                                            {
-                                                                console.warn(error)
-                                                            }
-                                                        )
-                                                    }
-                                                    else if (data.result === "no-undo")
-                                                    {
-                                                        alert(data.message)
-                                                    }
-                                                    else
-                                                    {
-                                                        throw new Error(data.message || "Unknown error during Undo operation")
-                                                    }
-                                                })
-                                                .catch((error) =>
-                                                {
-                                                    console.warn(error.message)
-                                                })
-                                        })
-                                    )
-
-                                    // --- Label buttons ---
-                                    const labelButtons = project.labels.map((labelObject) =>
-                                    {
-                                        const labelButton = document.createElement("button")
-                                        labelButton.classList.add("btn", "btn-sm", "me-1")
-                                        labelButton.textContent = labelObject.label.charAt(0)
-                                        labelButton.style.backgroundColor = labelObject.color
-                                        labelButton.style.color = "#fff"
-                                        labelButton.title = labelObject.label
-                                        labelButton.setAttribute("label", labelObject.label)
-
-                                        addEventListenerWithId(labelButton, "click", labelObject.label + "_select", () =>
-                                        {
-                                            blockButtons(null)
-
-                                            const currentActiveLabel = imageCardDiv.getAttribute("active_label")
-                                            const newLabel = labelButton.getAttribute("label")
-
-                                            const enableControls = (enabled) =>
-                                            {
-                                                labelButtons.forEach((lb) =>
-                                                {
-                                                    lb.disabled = !enabled
-                                                })
-                                            }
-
-                                            enableControls(false)
-
-                                            checkUnsaveAndSave(imageBlock, saveButton, project.id_project, image.image, currentActiveLabel, () =>
-                                            {
-                                                const vc = imageBlock.querySelector("canvas.vector-canvas")
-                                                if (vc)
-                                                {
-                                                    vc.remove()
-                                                }
-
-                                                const pc = getPngCanvas(imageBlock, fullImage, fullImageContainer)
-                                                if (pc)
-                                                {
-                                                    pc.remove()
-                                                }
-
-                                                if (currentActiveLabel === newLabel)
-                                                {
-                                                    labelButton.classList.remove("selected-label-button")
-                                                    imageCardDiv.removeAttribute("active_label")
-                                                    enableControls(true)
-                                                }
-                                                else
-                                                {
-                                                    labelButtons.forEach((lb) => lb.classList.remove("selected-label-button"))
-                                                    labelButton.classList.add("selected-label-button")
-                                                    imageCardDiv.setAttribute("active_label", newLabel)
-
-                                                    activateLabel(
-                                                        project.id_project, image.image, newLabel,
-                                                        imageBlock, fullImage, fullImageContainer,
-                                                        project.labels, clearCanvasButton,
-                                                        () => enableControls(true),
-                                                        (error) => console.warn(error)
-                                                    )
-                                                }
-                                            }, (error) => console.warn(error))
-                                        })
-
-                                        return labelButton
-                                    })
-
-                                    // --- Predict ---
-                                    const predictObjectsButton = document.createElement("button")
-                                    predictObjectsButton.classList.add("btn", "btn-sm", "btn-secondary", "ms-4", "me-1")
-                                    predictObjectsButton.innerHTML = "\uD83E\uDD16"
-                                    predictObjectsButton.title = "Predict Objects"
-                                    addEventListenerWithId(predictObjectsButton, "click", "predict", () =>
-                                        getActiveLabel(imageCardDiv, (activeLabel) =>
-                                        {
-                                            blockButtons(null)
-                                            predictObjects(project, activeLabel, imageCardDiv, imageBlock, fullImage, fullImageContainer, saveButton, clearCanvasButton, null)
-                                        })
-                                    )
-
-                                    // --- Predict in area ---
-                                    const predictRectangleButton = document.createElement("button")
-                                    predictRectangleButton.classList.add("btn", "btn-sm", "btn-secondary", "me-1")
-                                    predictRectangleButton.innerHTML = "\u25A3"
-                                    predictRectangleButton.title = "Predict Objects in Rectangular Area"
-                                    addEventListenerWithId(predictRectangleButton, "click", "predict_area", () =>
-                                    {
-                                        getActiveLabel(imageCardDiv, (activeLabel) =>
-                                        {
-                                            blockButtons(null)
-
-                                            const pngCanvas = getPngCanvas(imageBlock, fullImage, fullImageContainer)
-                                            const vectorCanvas = getVectorCanvas(imageBlock, fullImage, fullImageContainer, true)
-
-                                            if (vectorCanvas)
-                                            {
-                                                activateCanvas(pngCanvas, vectorCanvas, false)
-
-                                                let isDrawing = false
-                                                let startX, startY
-                                                let rect = null
-                                                let predictAreaButton = null
-                                                let closeBtn = null
-
-                                                function removeRectangleAndButton()
-                                                {
-                                                    if (rect)
-                                                    {
-                                                        fullImageContainer.removeChild(rect)
-                                                        rect = null
-                                                    }
-                                                    if (predictAreaButton)
-                                                    {
-                                                        fullImageContainer.removeChild(predictAreaButton)
-                                                        predictAreaButton = null
-                                                    }
-                                                    if (closeBtn)
-                                                    {
-                                                        fullImageContainer.removeChild(closeBtn)
-                                                        closeBtn = null
-                                                    }
-                                                }
-
-                                                function removeEventListeners()
-                                                {
-                                                    removeEventListenerWithId(vectorCanvas, "predict_area_mouse_down")
-                                                    removeEventListenerWithId(vectorCanvas, "predict_area_mouse_move")
-                                                    removeEventListenerWithId(vectorCanvas, "predict_area_mouse_up")
-                                                    removeEventListenerWithId(document, "predict_area_key_up")
-                                                    removeEventListenerWithId(document, "predict_area_finalize")
-                                                }
-
-                                                addEventListenerWithId(vectorCanvas, "mousedown", "predict_area_mouse_down", (event) =>
-                                                {
-                                                    if (predictAreaButton != null || rect != null)
-                                                    {
-                                                        removeRectangleAndButton()
-                                                    }
-
-                                                    isDrawing = true
-                                                    const rectBounds = vectorCanvas.getBoundingClientRect()
-                                                    startX = event.clientX - rectBounds.left
-                                                    startY = event.clientY - rectBounds.top
-
-                                                    rect = document.createElement("div")
-                                                    rect.style.position = "absolute"
-                                                    rect.style.border = "2px dashed #000"
-                                                    rect.style.left = startX + "px"
-                                                    rect.style.top = startY + "px"
-                                                    fullImageContainer.appendChild(rect)
-                                                })
-
-                                                addEventListenerWithId(vectorCanvas, "mousemove", "predict_area_mouse_move", (event) =>
-                                                {
-                                                    if (!isDrawing)
-                                                    {
-                                                        return
-                                                    }
-                                                    const rectBounds = vectorCanvas.getBoundingClientRect()
-                                                    const mouseX = event.clientX - rectBounds.left
-                                                    const mouseY = event.clientY - rectBounds.top
-
-                                                    const width = mouseX - startX
-                                                    const height = mouseY - startY
-
-                                                    rect.style.width = Math.abs(width) + "px"
-                                                    rect.style.height = Math.abs(height) + "px"
-                                                    rect.style.left = (width < 0 ? mouseX : startX) + "px"
-                                                    rect.style.top = (height < 0 ? mouseY : startY) + "px"
-                                                    rect.style.zIndex = "500"
-
-                                                    const rectLeft = parseFloat(rect.style.left)
-                                                    const rectTop = parseFloat(rect.style.top)
-
-                                                    if (!predictAreaButton)
-                                                    {
-                                                        predictAreaButton = document.createElement("button")
-                                                        predictAreaButton.textContent = "Predict"
-                                                        predictAreaButton.style.position = "absolute"
-                                                        predictAreaButton.style.left = (rectLeft + 10) + "px"
-                                                        predictAreaButton.style.top = (rectTop + 10) + "px"
-                                                        predictAreaButton.style.zIndex = "1100"
-                                                        fullImageContainer.appendChild(predictAreaButton)
-
-                                                        closeBtn = document.createElement("button")
-                                                        closeBtn.textContent = "\u2A09"
-                                                        closeBtn.style.position = "absolute"
-                                                        closeBtn.style.color = "red"
-                                                        closeBtn.style.left = (rectLeft + predictAreaButton.offsetWidth + 20) + "px"
-                                                        closeBtn.style.top = (rectTop + 10) + "px"
-                                                        closeBtn.style.zIndex = "1100"
-                                                        fullImageContainer.appendChild(closeBtn)
-
-                                                        addEventListenerWithId(closeBtn, "click", "close_predict_area", () =>
-                                                        {
-                                                            removeRectangleAndButton()
-                                                        })
-
-                                                        addEventListenerWithId(predictAreaButton, "click", "execute_predict_area", () =>
-                                                        {
-                                                            const elementArea = rect.getBoundingClientRect()
-                                                            const containerArea = imageBlock.getBoundingClientRect()
-
-                                                            const relativeX = elementArea.left - containerArea.left
-                                                            const relativeY = elementArea.top - containerArea.top
-                                                            const relativeWidth = elementArea.width
-                                                            const relativeHeight = elementArea.height
-
-                                                            const cropArea = {
-                                                                x: toPercentage(relativeX, containerArea.width),
-                                                                y: toPercentage(relativeY, containerArea.height),
-                                                                width: toPercentage(relativeWidth, containerArea.width),
-                                                                height: toPercentage(relativeHeight, containerArea.height)
-                                                            }
-
-                                                            removeEventListeners()
-
-                                                            predictObjects(
-                                                                project, activeLabel, imageCardDiv, imageBlock, fullImage, fullImageContainer,
-                                                                saveButton, clearCanvasButton, cropArea,
-                                                                () => removeRectangleAndButton()
-                                                            )
-                                                        })
-                                                    }
-                                                    else
-                                                    {
-                                                        predictAreaButton.style.left = (rectLeft + 10) + "px"
-                                                        predictAreaButton.style.top = (rectTop + 10) + "px"
-                                                        closeBtn.style.left = (rectLeft + predictAreaButton.offsetWidth + 20) + "px"
-                                                        closeBtn.style.top = (rectTop + 10) + "px"
-                                                    }
-                                                })
-
-                                                addEventListenerWithId(vectorCanvas, "mouseup", "predict_area_mouse_up", () =>
-                                                {
-                                                    if (!isDrawing)
-                                                    {
-                                                        return
-                                                    }
-                                                    isDrawing = false
-                                                })
-
-                                                addEventListenerWithId(document, "keyup", "predict_area_key_up", (event) =>
-                                                {
-                                                    if (event.key === "Escape")
-                                                    {
-                                                        removeRectangleAndButton()
-                                                        removeEventListeners()
-                                                    }
-                                                })
-
-                                                setTimeout(() =>
-                                                    addEventListenerWithId(document, "click", "predict_area_finalize", (event) =>
-                                                    {
-                                                        const rectBounds = vectorCanvas.getBoundingClientRect()
-                                                        const scrollX = window.scrollX
-                                                        const scrollY = window.scrollY
-
-                                                        if (
-                                                            event.clientX < rectBounds.left + scrollX ||
-                                                            event.clientX > rectBounds.right + scrollX ||
-                                                            event.clientY < rectBounds.top + scrollY ||
-                                                            event.clientY > rectBounds.bottom + scrollY
-                                                        )
-                                                        {
-                                                            removeRectangleAndButton()
-                                                            removeEventListeners()
-                                                        }
-                                                    }), 0)
-                                            }
-                                        })
-                                    })
 
                                     // --- Close ---
                                     const closeButtonEl = document.createElement("button")
@@ -1127,6 +460,7 @@ export function updateProjects(responseJson, clear)
                                     closeButtonEl.textContent = "\u2716"
                                     addEventListenerWithId(closeButtonEl, "click", "close_full_image", () =>
                                     {
+                                        if (skeletonCleanup) skeletonCleanup()
                                         blockButtons(null)
 
                                         fullImage.zoom_level = 100
@@ -1141,15 +475,763 @@ export function updateProjects(responseJson, clear)
                                         toolbar.remove()
                                     })
 
-                                    buttons.push(
-                                        zoomInButton, zoomOutButton,
-                                        brushButton, eraserButton, antiLabelButton,
-                                        undoButton,
-                                        ...labelButtons,
-                                        predictObjectsButton, predictRectangleButton,
-                                        clearCanvasButton, saveButton,
-                                        closeButtonEl
-                                    )
+                                    if (projectType === "yolo-skeleton")
+                                    {
+                                        skeletonCleanup = setupSkeletonMode({
+                                            project, image, imageBlock, fullImage, fullImageContainer,
+                                            imageCardDiv, buttons, zoomInButton, zoomOutButton, saveButton,
+                                            closeButtonEl, blockButtons, imagesDiv
+                                        })
+                                    }
+                                    else
+                                    {
+                                        let intervalId = null
+
+                                        const handleSave = () =>
+                                        {
+                                            if (!imagesDiv || !document.body.contains(imagesDiv))
+                                            {
+                                                clearInterval(intervalId)
+                                            }
+                                            else if (imageCardDiv.hasAttribute("active_label"))
+                                            {
+                                                const label = imageCardDiv.getAttribute("active_label")
+                                                if (label !== "")
+                                                {
+                                                    checkUnsaveAndSave(
+                                                        imageBlock,
+                                                        saveButton,
+                                                        project.id_project,
+                                                        image.image,
+                                                        label,
+                                                        () =>
+                                                        {
+                                                            saveButton.disabled = true
+                                                        },
+                                                        (error) =>
+                                                        {
+                                                            console.warn(error)
+                                                        }
+                                                    )
+                                                }
+                                            }
+                                        }
+
+                                        addEventListenerWithId(saveButton, "click", "save_masks", handleSave)
+
+                                        const checkAndSave = () =>
+                                        {
+                                            if (!saveButton.disabled)
+                                            {
+                                                handleSave()
+                                            }
+                                        }
+
+                                        intervalId = setInterval(checkAndSave, 15000)
+
+                                        const clearCanvasButton = document.createElement("button")
+                                        clearCanvasButton.classList.add("btn", "btn-sm", "btn-secondary", "ms-3")
+                                        clearCanvasButton.textContent = "\u238A"
+                                        clearCanvasButton.disabled = true
+                                        clearCanvasButton.title = "Clear canvas"
+                                        addEventListenerWithId(clearCanvasButton, "click", "clear_canvas", () =>
+                                        {
+                                            const pngCanvas = getPngCanvas(imageBlock, fullImage, fullImageContainer)
+                                            if (pngCanvas)
+                                            {
+                                                clearCanvas(pngCanvas)
+                                                setPngCanvasUnsaved(pngCanvas, saveButton, clearCanvasButton)
+                                            }
+                                        })
+
+                                        // --- Brush ---
+                                        const brushButton = document.createElement("button")
+                                        brushButton.classList.add("btn", "btn-sm", "btn-secondary", "me-1")
+                                        brushButton.innerHTML = "\uD83D\uDD8C\uFE0F"
+                                        addEventListenerWithId(brushButton, "click", "brush_mode", () =>
+                                        {
+                                            getActiveLabel(imageCardDiv, (activeLabel) =>
+                                            {
+                                                const labelColor = getColor(activeLabel, project.labels)
+                                                const vectorCanvas = getVectorCanvas(imageBlock, fullImage, fullImageContainer, true)
+                                                const pngCanvas = getPngCanvas(imageBlock, fullImage, fullImageContainer, false)
+
+                                                let brushSlider = document.getElementById("brush_slider")
+
+                                                blockButtons(brushButton, "brush_mode", () =>
+                                                {
+                                                    brushSlider.remove()
+                                                    hideLabelButtons(labelButtons, activeLabel, false)
+                                                    removeEventListenerWithId(pngCanvas, "brush_mouse_down")
+                                                    removeEventListenerWithId(pngCanvas, "brush_mouse_move")
+                                                    removeEventListenerWithId(pngCanvas, "brush_mouse_up")
+                                                })
+
+                                                hideLabelButtons(labelButtons, activeLabel, true)
+                                                activateCanvas(pngCanvas, vectorCanvas, true)
+
+                                                const getMouseCoords = (event) => getMouseCoordinatesCanvas(event, pngCanvas)
+
+                                                if (!brushSlider)
+                                                {
+                                                    brushSlider = document.createElement("input")
+                                                    brushSlider.type = "range"
+                                                    brushSlider.min = "1"
+                                                    brushSlider.max = "50"
+                                                    brushSlider.value = getInitialSliderValue(brushButton, "data-brush-size", "10")
+                                                    brushSlider.title = "Brush size"
+                                                    brushSlider.id = "brush_slider"
+                                                    brushSlider.className = "me-1"
+                                                    brushButton.parentNode.insertBefore(brushSlider, brushButton.nextSibling)
+                                                }
+
+                                                let isPainting = false
+                                                let brushSize = parseInt(brushSlider.value, 10)
+                                                brushSlider.addEventListener("input", () =>
+                                                {
+                                                    brushSize = parseInt(brushSlider.value, 10)
+                                                    setSliderValue(brushButton, "data-brush-size", brushSize)
+                                                })
+
+                                                const ctx = pngCanvas.getContext("2d")
+                                                let prevX = null, prevY = null
+
+                                                addEventListenerWithId(pngCanvas, "mousedown", "brush_mouse_down", (event) =>
+                                                {
+                                                    const {mouse_x, mouse_y} = getMouseCoords(event)
+                                                    isPainting = true
+                                                    prevX = mouse_x
+                                                    prevY = mouse_y
+                                                    paintCircle(ctx, mouse_x, mouse_y, brushSize, labelColor)
+                                                })
+
+                                                addEventListenerWithId(pngCanvas, "mousemove", "brush_mouse_move", (event) =>
+                                                {
+                                                    if (!isPainting)
+                                                    {
+                                                        return
+                                                    }
+                                                    const {mouse_x, mouse_y} = getMouseCoords(event)
+                                                    paintCircle(ctx, mouse_x, mouse_y, brushSize, labelColor, prevX, prevY)
+                                                    prevX = mouse_x
+                                                    prevY = mouse_y
+                                                })
+
+                                                addEventListenerWithId(pngCanvas, "mouseup", "brush_mouse_up", () =>
+                                                {
+                                                    isPainting = false
+                                                    prevX = null
+                                                    prevY = null
+                                                    saveLabelData(project.id_project, image.image, activeLabel, imageBlock, () =>
+                                                    {
+                                                    }, () =>
+                                                    {
+                                                    }, "png")
+                                                })
+                                            })
+                                        })
+
+                                        // --- Eraser ---
+                                        const eraserButton = document.createElement("button")
+                                        eraserButton.classList.add("btn", "btn-sm", "btn-secondary", "me-1")
+                                        eraserButton.innerHTML = "\uD83E\uDDFD"
+                                        addEventListenerWithId(eraserButton, "click", "eraser_mode", () =>
+                                        {
+                                            getActiveLabel(imageCardDiv, (activeLabel) =>
+                                            {
+                                                const vectorCanvas = getVectorCanvas(imageBlock, fullImage, fullImageContainer, true)
+                                                const pngCanvas = getPngCanvas(imageBlock, fullImage, fullImageContainer, false)
+
+                                                let eraserSlider = document.getElementById("eraser_slider")
+
+                                                blockButtons(eraserButton, "eraser_mode", () =>
+                                                {
+                                                    eraserSlider.remove()
+                                                    hideLabelButtons(labelButtons, activeLabel, false)
+                                                    removeEventListenerWithId(pngCanvas, "eraser_mouse_down")
+                                                    removeEventListenerWithId(pngCanvas, "eraser_mouse_move")
+                                                    removeEventListenerWithId(pngCanvas, "eraser_mouse_up")
+                                                })
+
+                                                hideLabelButtons(labelButtons, activeLabel, true)
+                                                activateCanvas(pngCanvas, vectorCanvas, true)
+
+                                                const getMouseCoords = (event) => getMouseCoordinatesCanvas(event, pngCanvas)
+
+                                                if (!eraserSlider)
+                                                {
+                                                    eraserSlider = document.createElement("input")
+                                                    eraserSlider.type = "range"
+                                                    eraserSlider.min = "1"
+                                                    eraserSlider.max = "50"
+                                                    eraserSlider.value = getInitialSliderValue(eraserButton, "data-eraser-size", "10")
+                                                    eraserSlider.title = "Eraser size"
+                                                    eraserSlider.id = "eraser_slider"
+                                                    eraserSlider.className = "me-1"
+                                                    eraserButton.parentNode.insertBefore(eraserSlider, eraserButton.nextSibling)
+                                                }
+
+                                                let isErasing = false
+                                                let eraserSize = parseInt(eraserSlider.value, 10)
+                                                eraserSlider.addEventListener("input", () =>
+                                                {
+                                                    eraserSize = parseInt(eraserSlider.value, 10)
+                                                    setSliderValue(eraserButton, "data-eraser-size", eraserSize)
+                                                })
+
+                                                const ctx = pngCanvas.getContext("2d")
+                                                let prevX = null, prevY = null
+
+                                                addEventListenerWithId(pngCanvas, "mousedown", "eraser_mouse_down", (event) =>
+                                                {
+                                                    const {mouse_x, mouse_y} = getMouseCoords(event)
+                                                    isErasing = true
+                                                    prevX = mouse_x
+                                                    prevY = mouse_y
+                                                    eraseCircle(ctx, mouse_x, mouse_y, eraserSize)
+                                                })
+
+                                                addEventListenerWithId(pngCanvas, "mousemove", "eraser_mouse_move", (event) =>
+                                                {
+                                                    if (!isErasing)
+                                                    {
+                                                        return
+                                                    }
+                                                    const {mouse_x, mouse_y} = getMouseCoords(event)
+                                                    eraseCircle(ctx, mouse_x, mouse_y, eraserSize, prevX, prevY)
+                                                    prevX = mouse_x
+                                                    prevY = mouse_y
+                                                })
+
+                                                addEventListenerWithId(pngCanvas, "mouseup", "eraser_mouse_up", () =>
+                                                {
+                                                    isErasing = false
+                                                    prevX = null
+                                                    prevY = null
+                                                    saveLabelData(project.id_project, image.image, activeLabel, imageBlock, () =>
+                                                    {
+                                                    }, () =>
+                                                    {
+                                                    }, "png")
+                                                })
+                                            })
+                                        })
+
+                                        // --- Anti-label ---
+                                        const antiLabelButton = document.createElement("button")
+                                        antiLabelButton.classList.add("btn", "btn-sm", "btn-secondary", "me-4")
+                                        antiLabelButton.innerHTML = "\uD83D\uDEAB"
+                                        antiLabelButton.title = "AntiLabel"
+                                        addEventListenerWithId(antiLabelButton, "click", "anti_label_mode", () =>
+                                            getActiveLabel(imageCardDiv, (activeLabel) =>
+                                            {
+                                                const labelColor = getColor(activeLabel, project.labels)
+                                                const vectorCanvas = getVectorCanvas(imageBlock, fullImage, fullImageContainer, true)
+                                                const pngCanvas = getPngCanvas(imageBlock, fullImage, fullImageContainer, false)
+
+                                                blockButtons(antiLabelButton, "anti_label_mode", () =>
+                                                {
+                                                    removeEventListenerWithId(vectorCanvas, "anti_label_mouse_down")
+                                                    removeEventListenerWithId(vectorCanvas, "anti_label_mouse_move")
+                                                    removeEventListenerWithId(vectorCanvas, "anti_label_mouse_up")
+                                                    removeEventListenerWithId(vectorCanvas, "anti_label_double_click")
+                                                })
+
+                                                activateCanvas(pngCanvas, vectorCanvas, false)
+
+                                                if (vectorCanvas)
+                                                {
+                                                    let isDrawing = false
+                                                    let currentRect = null
+                                                    let startX = 0, startY = 0
+                                                    let vectorData = []
+
+                                                    const saveVectorData = () =>
+                                                    {
+                                                        if (vectorData.length > 0)
+                                                        {
+                                                            vectorCanvas.setAttribute("vector_data", JSON.stringify(vectorData))
+                                                        }
+                                                        else
+                                                        {
+                                                            vectorCanvas.removeAttribute("vector_data")
+                                                        }
+                                                        saveLabelData(project.id_project, image.image, activeLabel, imageBlock, () =>
+                                                        {
+                                                        }, () =>
+                                                        {
+                                                        }, "vector")
+                                                    }
+
+                                                    const getMouseCoords = (event) => getMouseCoordinatesCanvas(event, vectorCanvas)
+
+                                                    const vectorDataJson = vectorCanvas.getAttribute("vector_data")
+                                                    if (vectorDataJson)
+                                                    {
+                                                        vectorData = JSON.parse(vectorDataJson)
+                                                    }
+
+                                                    addEventListenerWithId(vectorCanvas, "mousedown", "anti_label_mouse_down", (event) =>
+                                                    {
+                                                        const {mouse_x, mouse_y} = getMouseCoords(event)
+
+                                                        for (const shape of vectorData)
+                                                        {
+                                                            if (shape.type === "anti-rectangle")
+                                                            {
+                                                                const handles = getRectangleHandles(shape)
+                                                                for (const handle of handles)
+                                                                {
+                                                                    if (pointInRect(mouse_x, mouse_y, handle.x, handle.y, handle.size, handle.size))
+                                                                    {
+                                                                        isDrawing = true
+                                                                        currentRect = shape
+                                                                        currentRect.resizing = true
+                                                                        currentRect.resize_handle = handle.position
+                                                                        return
+                                                                    }
+                                                                }
+                                                            }
+                                                        }
+
+                                                        for (const shape of vectorData)
+                                                        {
+                                                            if (shape.type === "anti-rectangle")
+                                                            {
+                                                                if (pointInRect(mouse_x, mouse_y, shape.x, shape.y, shape.width, shape.height))
+                                                                {
+                                                                    return
+                                                                }
+                                                            }
+                                                        }
+
+                                                        isDrawing = true
+                                                        startX = mouse_x
+                                                        startY = mouse_y
+                                                        currentRect = {
+                                                            type: "anti-rectangle",
+                                                            x: startX,
+                                                            y: startY,
+                                                            width: 0,
+                                                            height: 0,
+                                                            color: labelColor,
+                                                            lineWidth: 2
+                                                        }
+                                                        vectorData.push(currentRect)
+                                                    })
+
+                                                    addEventListenerWithId(vectorCanvas, "mousemove", "anti_label_mouse_move", (event) =>
+                                                    {
+                                                        if (!isDrawing || !currentRect)
+                                                        {
+                                                            return
+                                                        }
+                                                        const {mouse_x, mouse_y} = getMouseCoords(event)
+
+                                                        if (currentRect.resizing)
+                                                        {
+                                                            resizeRectangle(currentRect, mouse_x, mouse_y)
+                                                        }
+                                                        else
+                                                        {
+                                                            currentRect.width = mouse_x - startX
+                                                            currentRect.height = mouse_y - startY
+                                                        }
+                                                        renderVectorData(vectorData, vectorCanvas)
+                                                    })
+
+                                                    addEventListenerWithId(vectorCanvas, "mouseup", "anti_label_mouse_up", () =>
+                                                    {
+                                                        if (isDrawing)
+                                                        {
+                                                            isDrawing = false
+                                                            if (currentRect)
+                                                            {
+                                                                currentRect.resizing = false
+                                                                currentRect.resize_handle = null
+                                                                currentRect = null
+                                                            }
+
+                                                            vectorData = vectorData.filter((shape) =>
+                                                            {
+                                                                if (shape.type === "anti-rectangle")
+                                                                {
+                                                                    return shape.width > 1 && shape.height > 1
+                                                                }
+                                                                return true
+                                                            })
+
+                                                            saveVectorData()
+                                                        }
+                                                    })
+
+                                                    addEventListenerWithId(vectorCanvas, "dblclick", "anti_label_double_click", (event) =>
+                                                    {
+                                                        const {mouse_x, mouse_y} = getMouseCoords(event)
+
+                                                        for (let i = 0; i < vectorData.length; i++)
+                                                        {
+                                                            const shape = vectorData[i]
+                                                            if (shape.type === "anti-rectangle")
+                                                            {
+                                                                if (pointInRect(mouse_x, mouse_y, shape.x, shape.y, shape.width, shape.height))
+                                                                {
+                                                                    vectorData.splice(i, 1)
+                                                                    renderVectorData(vectorData, vectorCanvas)
+                                                                    saveVectorData()
+                                                                    return
+                                                                }
+                                                            }
+                                                        }
+                                                    })
+                                                }
+                                            })
+                                        )
+
+                                        // --- Undo ---
+                                        const undoButton = document.createElement("button")
+                                        undoButton.classList.add("btn", "btn-sm", "btn-secondary", "me-4")
+                                        undoButton.innerHTML = "\u21B6"
+                                        undoButton.title = "Undo"
+                                        addEventListenerWithId(undoButton, "click", "undo_button", () =>
+                                            getActiveLabel(imageCardDiv, (activeLabel) =>
+                                            {
+                                                blockButtons(null)
+                                                const undoUrl = `/undo_png_mask/${project.id_project}/${encodeURIComponent(image.image)}/${encodeURIComponent(activeLabel)}`
+
+                                                fetch(undoUrl, {cache: "no-store"})
+                                                    .then((response) =>
+                                                    {
+                                                        if (!response.ok)
+                                                        {
+                                                            return response.json().then((err) =>
+                                                            {
+                                                                throw new Error(err.detail || "Unknown error during Undo operation")
+                                                            }).catch(() =>
+                                                            {
+                                                                throw new Error("Unknown error during Undo operation")
+                                                            })
+                                                        }
+                                                        return response.json()
+                                                    })
+                                                    .then((data) =>
+                                                    {
+                                                        if (data.result === "ok")
+                                                        {
+                                                            clearCanvas(getPngCanvas(imageBlock, fullImage, fullImageContainer))
+                                                            activateLabel(
+                                                                project.id_project, image.image, activeLabel,
+                                                                imageBlock, fullImage, fullImageContainer,
+                                                                project.labels, clearCanvasButton,
+                                                                () =>
+                                                                {
+                                                                },
+                                                                (error) =>
+                                                                {
+                                                                    console.warn(error)
+                                                                }
+                                                            )
+                                                        }
+                                                        else if (data.result === "no-undo")
+                                                        {
+                                                            alert(data.message)
+                                                        }
+                                                        else
+                                                        {
+                                                            throw new Error(data.message || "Unknown error during Undo operation")
+                                                        }
+                                                    })
+                                                    .catch((error) =>
+                                                    {
+                                                        console.warn(error.message)
+                                                    })
+                                            })
+                                        )
+
+                                        // --- Label buttons ---
+                                        const labelButtons = (project.labels || []).map((labelObject) =>
+                                        {
+                                            const labelButton = document.createElement("button")
+                                            labelButton.classList.add("btn", "btn-sm", "me-1")
+                                            labelButton.textContent = labelObject.label.charAt(0)
+                                            labelButton.style.backgroundColor = labelObject.color
+                                            labelButton.style.color = "#fff"
+                                            labelButton.title = labelObject.label
+                                            labelButton.setAttribute("label", labelObject.label)
+
+                                            addEventListenerWithId(labelButton, "click", labelObject.label + "_select", () =>
+                                            {
+                                                blockButtons(null)
+
+                                                const currentActiveLabel = imageCardDiv.getAttribute("active_label")
+                                                const newLabel = labelButton.getAttribute("label")
+
+                                                const enableControls = (enabled) =>
+                                                {
+                                                    labelButtons.forEach((lb) =>
+                                                    {
+                                                        lb.disabled = !enabled
+                                                    })
+                                                }
+
+                                                enableControls(false)
+
+                                                checkUnsaveAndSave(imageBlock, saveButton, project.id_project, image.image, currentActiveLabel, () =>
+                                                {
+                                                    const vc = imageBlock.querySelector("canvas.vector-canvas")
+                                                    if (vc)
+                                                    {
+                                                        vc.remove()
+                                                    }
+
+                                                    const pc = getPngCanvas(imageBlock, fullImage, fullImageContainer)
+                                                    if (pc)
+                                                    {
+                                                        pc.remove()
+                                                    }
+
+                                                    if (currentActiveLabel === newLabel)
+                                                    {
+                                                        labelButton.classList.remove("selected-label-button")
+                                                        imageCardDiv.removeAttribute("active_label")
+                                                        enableControls(true)
+                                                    }
+                                                    else
+                                                    {
+                                                        labelButtons.forEach((lb) => lb.classList.remove("selected-label-button"))
+                                                        labelButton.classList.add("selected-label-button")
+                                                        imageCardDiv.setAttribute("active_label", newLabel)
+
+                                                        activateLabel(
+                                                            project.id_project, image.image, newLabel,
+                                                            imageBlock, fullImage, fullImageContainer,
+                                                            project.labels, clearCanvasButton,
+                                                            () => enableControls(true),
+                                                            (error) => console.warn(error)
+                                                        )
+                                                    }
+                                                }, (error) => console.warn(error))
+                                            })
+
+                                            return labelButton
+                                        })
+
+                                        // --- Predict ---
+                                        const predictObjectsButton = document.createElement("button")
+                                        predictObjectsButton.classList.add("btn", "btn-sm", "btn-secondary", "ms-4", "me-1")
+                                        predictObjectsButton.innerHTML = "\uD83E\uDD16"
+                                        predictObjectsButton.title = "Predict Objects"
+                                        addEventListenerWithId(predictObjectsButton, "click", "predict", () =>
+                                            getActiveLabel(imageCardDiv, (activeLabel) =>
+                                            {
+                                                blockButtons(null)
+                                                predictObjects(project, activeLabel, imageCardDiv, imageBlock, fullImage, fullImageContainer, saveButton, clearCanvasButton, null)
+                                            })
+                                        )
+
+                                        // --- Predict in area ---
+                                        const predictRectangleButton = document.createElement("button")
+                                        predictRectangleButton.classList.add("btn", "btn-sm", "btn-secondary", "me-1")
+                                        predictRectangleButton.innerHTML = "\u25A3"
+                                        predictRectangleButton.title = "Predict Objects in Rectangular Area"
+                                        addEventListenerWithId(predictRectangleButton, "click", "predict_area", () =>
+                                        {
+                                            getActiveLabel(imageCardDiv, (activeLabel) =>
+                                            {
+                                                blockButtons(null)
+
+                                                const pngCanvas = getPngCanvas(imageBlock, fullImage, fullImageContainer)
+                                                const vectorCanvas = getVectorCanvas(imageBlock, fullImage, fullImageContainer, true)
+
+                                                if (vectorCanvas)
+                                                {
+                                                    activateCanvas(pngCanvas, vectorCanvas, false)
+
+                                                    let isDrawing = false
+                                                    let startX, startY
+                                                    let rect = null
+                                                    let predictAreaButton = null
+                                                    let closeBtn = null
+
+                                                    function removeRectangleAndButton()
+                                                    {
+                                                        if (rect)
+                                                        {
+                                                            fullImageContainer.removeChild(rect)
+                                                            rect = null
+                                                        }
+                                                        if (predictAreaButton)
+                                                        {
+                                                            fullImageContainer.removeChild(predictAreaButton)
+                                                            predictAreaButton = null
+                                                        }
+                                                        if (closeBtn)
+                                                        {
+                                                            fullImageContainer.removeChild(closeBtn)
+                                                            closeBtn = null
+                                                        }
+                                                    }
+
+                                                    function removeEventListeners()
+                                                    {
+                                                        removeEventListenerWithId(vectorCanvas, "predict_area_mouse_down")
+                                                        removeEventListenerWithId(vectorCanvas, "predict_area_mouse_move")
+                                                        removeEventListenerWithId(vectorCanvas, "predict_area_mouse_up")
+                                                        removeEventListenerWithId(document, "predict_area_key_up")
+                                                        removeEventListenerWithId(document, "predict_area_finalize")
+                                                    }
+
+                                                    addEventListenerWithId(vectorCanvas, "mousedown", "predict_area_mouse_down", (event) =>
+                                                    {
+                                                        if (predictAreaButton != null || rect != null)
+                                                        {
+                                                            removeRectangleAndButton()
+                                                        }
+
+                                                        isDrawing = true
+                                                        const rectBounds = vectorCanvas.getBoundingClientRect()
+                                                        startX = event.clientX - rectBounds.left
+                                                        startY = event.clientY - rectBounds.top
+
+                                                        rect = document.createElement("div")
+                                                        rect.style.position = "absolute"
+                                                        rect.style.border = "2px dashed #000"
+                                                        rect.style.left = startX + "px"
+                                                        rect.style.top = startY + "px"
+                                                        fullImageContainer.appendChild(rect)
+                                                    })
+
+                                                    addEventListenerWithId(vectorCanvas, "mousemove", "predict_area_mouse_move", (event) =>
+                                                    {
+                                                        if (!isDrawing)
+                                                        {
+                                                            return
+                                                        }
+                                                        const rectBounds = vectorCanvas.getBoundingClientRect()
+                                                        const mouseX = event.clientX - rectBounds.left
+                                                        const mouseY = event.clientY - rectBounds.top
+
+                                                        const width = mouseX - startX
+                                                        const height = mouseY - startY
+
+                                                        rect.style.width = Math.abs(width) + "px"
+                                                        rect.style.height = Math.abs(height) + "px"
+                                                        rect.style.left = (width < 0 ? mouseX : startX) + "px"
+                                                        rect.style.top = (height < 0 ? mouseY : startY) + "px"
+                                                        rect.style.zIndex = "500"
+
+                                                        const rectLeft = parseFloat(rect.style.left)
+                                                        const rectTop = parseFloat(rect.style.top)
+
+                                                        if (!predictAreaButton)
+                                                        {
+                                                            predictAreaButton = document.createElement("button")
+                                                            predictAreaButton.textContent = "Predict"
+                                                            predictAreaButton.style.position = "absolute"
+                                                            predictAreaButton.style.left = (rectLeft + 10) + "px"
+                                                            predictAreaButton.style.top = (rectTop + 10) + "px"
+                                                            predictAreaButton.style.zIndex = "1100"
+                                                            fullImageContainer.appendChild(predictAreaButton)
+
+                                                            closeBtn = document.createElement("button")
+                                                            closeBtn.textContent = "\u2A09"
+                                                            closeBtn.style.position = "absolute"
+                                                            closeBtn.style.color = "red"
+                                                            closeBtn.style.left = (rectLeft + predictAreaButton.offsetWidth + 20) + "px"
+                                                            closeBtn.style.top = (rectTop + 10) + "px"
+                                                            closeBtn.style.zIndex = "1100"
+                                                            fullImageContainer.appendChild(closeBtn)
+
+                                                            addEventListenerWithId(closeBtn, "click", "close_predict_area", () =>
+                                                            {
+                                                                removeRectangleAndButton()
+                                                            })
+
+                                                            addEventListenerWithId(predictAreaButton, "click", "execute_predict_area", () =>
+                                                            {
+                                                                const elementArea = rect.getBoundingClientRect()
+                                                                const containerArea = imageBlock.getBoundingClientRect()
+
+                                                                const relativeX = elementArea.left - containerArea.left
+                                                                const relativeY = elementArea.top - containerArea.top
+                                                                const relativeWidth = elementArea.width
+                                                                const relativeHeight = elementArea.height
+
+                                                                const cropArea = {
+                                                                    x: toPercentage(relativeX, containerArea.width),
+                                                                    y: toPercentage(relativeY, containerArea.height),
+                                                                    width: toPercentage(relativeWidth, containerArea.width),
+                                                                    height: toPercentage(relativeHeight, containerArea.height)
+                                                                }
+
+                                                                removeEventListeners()
+
+                                                                predictObjects(
+                                                                    project, activeLabel, imageCardDiv, imageBlock, fullImage, fullImageContainer,
+                                                                    saveButton, clearCanvasButton, cropArea,
+                                                                    () => removeRectangleAndButton()
+                                                                )
+                                                            })
+                                                        }
+                                                        else
+                                                        {
+                                                            predictAreaButton.style.left = (rectLeft + 10) + "px"
+                                                            predictAreaButton.style.top = (rectTop + 10) + "px"
+                                                            closeBtn.style.left = (rectLeft + predictAreaButton.offsetWidth + 20) + "px"
+                                                            closeBtn.style.top = (rectTop + 10) + "px"
+                                                        }
+                                                    })
+
+                                                    addEventListenerWithId(vectorCanvas, "mouseup", "predict_area_mouse_up", () =>
+                                                    {
+                                                        if (!isDrawing)
+                                                        {
+                                                            return
+                                                        }
+                                                        isDrawing = false
+                                                    })
+
+                                                    addEventListenerWithId(document, "keyup", "predict_area_key_up", (event) =>
+                                                    {
+                                                        if (event.key === "Escape")
+                                                        {
+                                                            removeRectangleAndButton()
+                                                            removeEventListeners()
+                                                        }
+                                                    })
+
+                                                    setTimeout(() =>
+                                                        addEventListenerWithId(document, "click", "predict_area_finalize", (event) =>
+                                                        {
+                                                            const rectBounds = vectorCanvas.getBoundingClientRect()
+                                                            const scrollX = window.scrollX
+                                                            const scrollY = window.scrollY
+
+                                                            if (
+                                                                event.clientX < rectBounds.left + scrollX ||
+                                                                event.clientX > rectBounds.right + scrollX ||
+                                                                event.clientY < rectBounds.top + scrollY ||
+                                                                event.clientY > rectBounds.bottom + scrollY
+                                                            )
+                                                            {
+                                                                removeRectangleAndButton()
+                                                                removeEventListeners()
+                                                            }
+                                                        }), 0)
+                                                }
+                                            })
+                                        })
+
+                                        buttons.push(
+                                            zoomInButton, zoomOutButton,
+                                            brushButton, eraserButton, antiLabelButton,
+                                            undoButton,
+                                            ...labelButtons,
+                                            predictObjectsButton, predictRectangleButton,
+                                            clearCanvasButton, saveButton,
+                                            closeButtonEl
+                                        )
+                                    }
 
                                     for (const button of buttons)
                                     {
@@ -1254,5 +1336,6 @@ export function updateProjects(responseJson, clear)
 
         addEventListenerWithId(labelsButton, 'click', 'show_labels', (e) => { e.preventDefault(); showContent(labelsDiv) })
         addEventListenerWithId(settingsButton, 'click', 'show_settings', (e) => { e.preventDefault(); showContent(settingsDiv) })
+        initSkeletonTabHandler(skeletonButton, skeletonDiv, showContent, project)
     }
 }

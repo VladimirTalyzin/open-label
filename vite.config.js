@@ -10,6 +10,8 @@ export default defineConfig({
   server: {
     port: 3000,
     proxy: {
+      '/auth': 'http://localhost:8001',
+      '/admin': 'http://localhost:8001',
       '/add_project': 'http://localhost:8001',
       '/get_projects_list': 'http://localhost:8001',
       '/get_project_data': 'http://localhost:8001',
@@ -30,6 +32,12 @@ export default defineConfig({
       '/delete_image': 'http://localhost:8001',
       '/delete_project': 'http://localhost:8001',
       '/update_project': 'http://localhost:8001',
+      '/set_project_type': 'http://localhost:8001',
+      '/set_skeleton_template': 'http://localhost:8001',
+      '/get_skeleton_data': 'http://localhost:8001',
+      '/upload_skeleton_data': 'http://localhost:8001',
+      '/get_skeleton_mask': 'http://localhost:8001',
+      '/upload_skeleton_mask': 'http://localhost:8001',
     },
   },
 })

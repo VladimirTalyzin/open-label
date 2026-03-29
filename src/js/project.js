@@ -199,6 +199,45 @@ export function updateProjects(responseJson, clear)
         setValueListener(predictionUrlInput, "set_prediction_url", "prediction_url", {id_project: project.id_project})
         settingsDiv.appendChild(predictionUrlInput)
 
+        const exportButton = document.createElement("button")
+        exportButton.classList.add("btn", "btn-outline-primary", "mb-4", "me-2")
+        exportButton.textContent = "Export project"
+
+        addEventListenerWithId(exportButton, "click", "export_click", () =>
+        {
+            exportButton.disabled = true
+            exportButton.textContent = "Exporting..."
+
+            fetch(`/export_project/${project.id_project}`)
+                .then(r =>
+                {
+                    if (r.status === 401)
+                    {
+                        window.location.reload()
+                        throw new Error("Not authenticated")
+                    }
+                    if (!r.ok) throw new Error("Export failed")
+                    return r.blob()
+                })
+                .then(blob =>
+                {
+                    const url = URL.createObjectURL(blob)
+                    const a = document.createElement("a")
+                    a.href = url
+                    a.download = (project.project_name || `project_${project.id_project}`) + ".zip"
+                    a.click()
+                    URL.revokeObjectURL(url)
+                })
+                .catch(err => console.log(err))
+                .finally(() =>
+                {
+                    exportButton.disabled = false
+                    exportButton.textContent = "Export project"
+                })
+        })
+
+        settingsDiv.appendChild(exportButton)
+
         const deleteButton = document.createElement("button")
         deleteButton.classList.add("btn", "btn-danger", "mb-4")
         deleteButton.textContent = "Delete project"
@@ -1292,19 +1331,70 @@ export function updateProjects(responseJson, clear)
                                 const input = document.createElement("input")
                                 input.type = "file"
                                 input.accept = "image/*"
+                                input.multiple = true
                                 input.style.display = "none"
-                                addEventListenerWithId(input, "change", "upload_image", () =>
+                                addEventListenerWithId(input, "change", "upload_image", async () =>
                                 {
-                                    const formData = new FormData()
-                                    formData.append("image", input.files[0])
+                                    const files = Array.from(input.files)
+                                    if (files.length === 0) return
 
-                                    fetch(`/upload_image/${project.id_project}`, {
-                                        method: "POST",
-                                        body: formData
-                                    })
-                                        .then((response) => response.json())
-                                        .then((answer) =>
+                                    const showProgress = files.length > 5
+                                    let overlay = null
+                                    let progressBar = null
+                                    let statusText = null
+                                    let errorsDiv = null
+
+                                    if (showProgress)
+                                    {
+                                        overlay = document.createElement("div")
+                                        overlay.classList.add("upload-progress-overlay")
+
+                                        const panel = document.createElement("div")
+                                        panel.classList.add("upload-progress-panel")
+
+                                        const title = document.createElement("h5")
+                                        title.textContent = "Загрузка изображений"
+
+                                        const progressWrapper = document.createElement("div")
+                                        progressWrapper.classList.add("progress")
+
+                                        progressBar = document.createElement("div")
+                                        progressBar.classList.add("progress-bar", "progress-bar-striped", "progress-bar-animated")
+                                        progressBar.style.width = "0%"
+                                        progressBar.textContent = "0%"
+                                        progressWrapper.appendChild(progressBar)
+
+                                        statusText = document.createElement("div")
+                                        statusText.classList.add("upload-status")
+                                        statusText.textContent = `0 / ${files.length}`
+
+                                        errorsDiv = document.createElement("div")
+                                        errorsDiv.classList.add("upload-errors")
+
+                                        panel.appendChild(title)
+                                        panel.appendChild(progressWrapper)
+                                        panel.appendChild(statusText)
+                                        panel.appendChild(errorsDiv)
+                                        overlay.appendChild(panel)
+                                        document.body.appendChild(overlay)
+                                    }
+
+                                    let uploaded = 0
+                                    const errors = []
+
+                                    for (const file of files)
+                                    {
+                                        const formData = new FormData()
+                                        formData.append("image", file)
+
+                                        try
                                         {
+                                            const response = await fetch(`/upload_image/${project.id_project}`, {
+                                                method: "POST",
+                                                body: formData
+                                            })
+                                            const answer = await response.json()
+
                                             if (answer.hasOwnProperty('result') && answer['result'] === 'ok')
                                             {
                                                 addImage(answer['image_data'], `${respJson.preview_file}?t=${new Date().getTime()}`)
@@ -1312,13 +1402,44 @@ export function updateProjects(responseJson, clear)
                                             }
                                             else
                                             {
-                                                console.error(answer)
+                                                const msg = `${file.name}: ${answer.message || 'error'}`
+                                                errors.push(msg)
+                                                console.error(msg)
                                             }
-                                        })
-                                        .catch((error) =>
+                                        }
+                                        catch (error)
                                         {
+                                            const msg = `${file.name}: ${error}`
+                                            errors.push(msg)
                                             console.error('Error uploading image:', error)
-                                        })
+                                        }
+
+                                        uploaded++
+
+                                        if (showProgress)
+                                        {
+                                            const percent = Math.round((uploaded / files.length) * 100)
+                                            progressBar.style.width = `${percent}%`
+                                            progressBar.textContent = `${percent}%`
+                                            statusText.textContent = `${uploaded} / ${files.length}`
+                                            errorsDiv.innerHTML = errors.map(e => `<div>${e}</div>`).join("")
+                                        }
+                                    }
+
+                                    if (overlay)
+                                    {
+                                        if (errors.length > 0)
+                                        {
+                                            progressBar.classList.remove("progress-bar-animated")
+                                            progressBar.classList.add("bg-warning")
+                                            statusText.textContent = `Готово: ${uploaded - errors.length} из ${files.length} (ошибок: ${errors.length})`
+                                            setTimeout(() => overlay.remove(), 3000)
+                                        }
+                                        else
+                                        {
+                                            overlay.remove()
+                                        }
+                                    }
                                 })
                                 input.click()
                             })

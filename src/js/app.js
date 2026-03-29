@@ -61,4 +61,49 @@ function showApp(user)
             addProjectButton
         )
     )
+
+    const importButton = document.getElementById("import-project-button")
+    const importFileInput = document.getElementById("import-project-file")
+
+    addEventListenerWithId(importButton, "click", "import_project_click", () =>
+    {
+        importFileInput.click()
+    })
+
+    addEventListenerWithId(importFileInput, "change", "import_project_change", () =>
+    {
+        const file = importFileInput.files[0]
+        if (!file) return
+
+        const formData = new FormData()
+        formData.append("file", file)
+
+        importButton.disabled = true
+        importButton.textContent = "Uploading..."
+
+        fetch("/import_project", {method: "POST", body: formData})
+            .then(r =>
+            {
+                if (r.status === 401)
+                {
+                    window.location.reload()
+                    throw new Error("Not authenticated")
+                }
+                return r.json()
+            })
+            .then(data =>
+            {
+                if (data.projects)
+                {
+                    updateProjects(data, true)
+                }
+            })
+            .catch(err => console.log(err))
+            .finally(() =>
+            {
+                importButton.disabled = false
+                importButton.textContent = "Upload project"
+                importFileInput.value = ""
+            })
+    })
 }

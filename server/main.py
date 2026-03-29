@@ -1,5 +1,7 @@
 import sys
 import traceback
+import zipfile
+import shutil
 from typing import Optional
 
 if sys.platform == "win32":
@@ -1294,6 +1296,112 @@ async def upload_skeleton_mask(id_project: int, image_name: str, image: UploadFi
         f.write(contents)
 
     return JSONResponse(content={"result": "ok"})
+
+
+@app.get("/export_project/{id_project}", tags=["Project"])
+async def export_project(id_project: int, request: Request):
+    user = require_user(request)
+    if not user_can_access_project(user, id_project):
+        raise HTTPException(status_code=403, detail="Access denied")
+
+    script_path = get_script_directory()
+    project_path = join_path(script_path, "projects", str(id_project))
+
+    if not path.exists(project_path):
+        raise HTTPException(status_code=404, detail="Project not found")
+
+    buffer = BytesIO()
+    with zipfile.ZipFile(buffer, "w", zipfile.ZIP_DEFLATED) as zf:
+        for root, dirs, files in __import__("os").walk(project_path):
+            # skip deleted folder
+            rel_root = path.relpath(root, project_path).replace("\\", "/")
+            if rel_root.startswith("deleted"):
+                continue
+            for file_name in files:
+                file_full = path.join(root, file_name)
+                arcname = path.relpath(file_full, project_path).replace("\\", "/")
+                zf.write(file_full, arcname)
+
+    buffer.seek(0)
+
+    settings_file = join_path(project_path, "project_settings.json")
+    project_name = f"project_{id_project}"
+    if path.exists(settings_file):
+        with open(settings_file, "r") as f:
+            data = load(f)
+            if data.get("project_name"):
+                project_name = data["project_name"]
+
+    safe_name = "".join(c if c.isalnum() or c in "._- " else "_" for c in project_name)
+    return StreamingResponse(
+        buffer,
+        media_type="application/zip",
+        headers={"Content-Disposition": f'attachment; filename="{safe_name}.zip"'}
+    )
+
+
+@app.post("/import_project", tags=["Project"])
+async def import_project(request: Request, file: UploadFile = File(...)):
+    user = require_user(request)
+
+    file_content = await file.read()
+    buffer = BytesIO(file_content)
+
+    try:
+        zf = zipfile.ZipFile(buffer, "r")
+    except zipfile.BadZipFile:
+        raise HTTPException(status_code=400, detail="Invalid ZIP file")
+
+    # Check that archive contains project_settings.json
+    names = zf.namelist()
+    if "project_settings.json" not in names:
+        zf.close()
+        raise HTTPException(status_code=400, detail="ZIP does not contain project_settings.json")
+
+    # Allocate new project ID
+    script_path = get_script_directory()
+    projects_path = join_path(script_path, "projects")
+    if not path.exists(projects_path):
+        makedirs(projects_path)
+
+    max_project_id = 0
+    for entry in listdir(projects_path):
+        if entry.isdigit():
+            max_project_id = max(max_project_id, int(entry))
+
+    new_project_id = max_project_id + 1
+    new_project_path = join_path(projects_path, str(new_project_id))
+    makedirs(new_project_path)
+
+    # Extract all files
+    for member in names:
+        # Security: skip absolute paths and path traversal
+        if member.startswith("/") or ".." in member:
+            continue
+        target = join_path(new_project_path, member)
+        if member.endswith("/"):
+            makedirs(target, exist_ok=True)
+        else:
+            target_dir = path.dirname(target)
+            if not path.exists(target_dir):
+                makedirs(target_dir, exist_ok=True)
+            with open(target, "wb") as f:
+                f.write(zf.read(member))
+
+    zf.close()
+
+    # Update project_settings.json with new ID
+    settings_file = join_path(new_project_path, "project_settings.json")
+    if path.exists(settings_file):
+        with open(settings_file, "r") as f:
+            settings = load(f)
+        settings["id_project"] = new_project_id
+        with open(settings_file, "w") as f:
+            dump(settings, f)
+
+    assign_project_to_group(new_project_id, user["group_id"])
+
+    return await get_projects_list(request)
 
 
 if __name__ == "__main__":

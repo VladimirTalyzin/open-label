@@ -36,6 +36,7 @@ export default defineConfig({
       '/set_skeleton_template': 'http://localhost:8001',
       '/get_skeleton_data': 'http://localhost:8001',
       '/upload_skeleton_data': 'http://localhost:8001',
+      '/get_skeleton_svg': 'http://localhost:8001',
       '/get_skeleton_mask': 'http://localhost:8001',
       '/upload_skeleton_mask': 'http://localhost:8001',
     },

@@ -927,7 +927,12 @@ async def get_images_list(id_project: int):
     if path.exists(settings_file):
         with open(settings_file, "r") as file_settings:
             project_data = load(file_settings)
-            return JSONResponse(content={"images": project_data.get("images", []), "preview_file": f"/get_preview/{id_project}.png"})
+            images = project_data.get("images", [])
+            skeletons_dir = join_path(project_path, "skeletons")
+            for img in images:
+                skel_file = join_path(skeletons_dir, f"{img['image']}.json")
+                img["has_skeleton"] = path.exists(skel_file)
+            return JSONResponse(content={"images": images, "preview_file": f"/get_preview/{id_project}.png"})
 
     else:
         raise HTTPException(status_code=404, detail="Project settings not found")
@@ -1340,6 +1345,25 @@ async def get_skeleton_data(id_project: int, image_name: str):
     return JSONResponse(content={"skeletons": data})
 
 
+def generate_skeleton_svg(skeletons, connections, img_width, img_height):
+    lines = [f'<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 {img_width} {img_height}" preserveAspectRatio="xMidYMid meet">']
+    for skel in skeletons:
+        pts = skel.get("points", [])
+        color = "#2196F3"
+        for conn in connections:
+            if len(conn) >= 2:
+                i1, i2 = conn[0], conn[1]
+                if i1 < len(pts) and i2 < len(pts):
+                    p1, p2 = pts[i1], pts[i2]
+                    lines.append(f'<line x1="{p1["x"]:.1f}" y1="{p1["y"]:.1f}" x2="{p2["x"]:.1f}" y2="{p2["y"]:.1f}" stroke="{color}" stroke-width="2" opacity="0.7"/>')
+        for p in pts:
+            v = p.get("visible", 2)
+            opacity = "0.7" if v >= 2 else "0.3"
+            lines.append(f'<circle cx="{p["x"]:.1f}" cy="{p["y"]:.1f}" r="4" fill="{color}" opacity="{opacity}"/>')
+    lines.append('</svg>')
+    return "\n".join(lines)
+
+
 @app.post("/upload_skeleton_data/{id_project}/{image_name}", tags=["Skeleton"])
 async def upload_skeleton_data(id_project: int, image_name: str, json_data: str = Form(...)):
     script_path = get_script_directory()
@@ -1359,9 +1383,51 @@ async def upload_skeleton_data(id_project: int, image_name: str, json_data: str 
         data = loads(json_data)
         with open(skeleton_file, "w", encoding="utf-8") as f:
             dump(data, f, ensure_ascii=False, indent=4)
+
+        # Generate SVG overlay
+        connections = []
+        img_w, img_h = 1000, 1000
+        settings_file = join_path(project_path, "project_settings.json")
+        if path.exists(settings_file):
+            with open(settings_file, "r") as sf:
+                settings = load(sf)
+                tpl = settings.get("skeleton_template", {})
+                connections = tpl.get("connections", [])
+                # Get actual image dimensions
+                images_dir = join_path(project_path, "images")
+                img_path = join_path(images_dir, image_name)
+                if path.exists(img_path):
+                    try:
+                        with Image.open(img_path) as img:
+                            img_w, img_h = img.size
+                    except Exception:
+                        pass
+
+        svg_content = generate_skeleton_svg(data, connections, img_w, img_h)
+        svg_file = join_path(skeleton_dir, f"{image_name}.svg")
+        with open(svg_file, "w", encoding="utf-8") as f:
+            f.write(svg_content)
+
         return JSONResponse(content={"result": "ok", "message": "Skeleton data saved"})
     except Exception as exception:
         raise HTTPException(status_code=500, detail=f"Error saving skeleton data: {exception}")
+
+
+@app.get("/get_skeleton_svg/{id_project}/{image_name}", tags=["Skeleton"])
+async def get_skeleton_svg(id_project: int, image_name: str):
+    script_path = get_script_directory()
+    project_path = join_path(script_path, "projects", str(id_project))
+
+    if not path.exists(project_path):
+        raise HTTPException(status_code=404, detail="Project not found")
+
+    image_name = transliterate(path.basename(image_name))
+    svg_file = join_path(project_path, "skeletons", f"{image_name}.svg")
+
+    if not path.exists(svg_file):
+        raise HTTPException(status_code=404, detail="SVG not found")
+
+    return FileResponse(svg_file, media_type="image/svg+xml")
 
 
 @app.get("/get_skeleton_mask/{id_project}/{image_name}", tags=["Skeleton"])

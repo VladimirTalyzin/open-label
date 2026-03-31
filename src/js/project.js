@@ -403,6 +403,44 @@ export function updateProjects(responseJson, clear)
             }
         }
 
+        // Overlay toggle state for skeleton SVG on tiles
+        let showSkeletonOverlay = false
+        const svgOverlays = []
+
+        function updateAllSvgOverlays()
+        {
+            for (const ov of svgOverlays)
+            {
+                ov.style.display = showSkeletonOverlay ? "block" : "none"
+            }
+        }
+
+        // Add overlay checkbox next to Images tab text
+        const overlayCheckLabel = document.createElement("label")
+        overlayCheckLabel.classList.add("form-check", "form-check-inline", "mb-0", "ms-2")
+        overlayCheckLabel.style.fontSize = "11px"
+        overlayCheckLabel.style.verticalAlign = "middle"
+        const overlayCheck = document.createElement("input")
+        overlayCheck.type = "checkbox"
+        overlayCheck.classList.add("form-check-input")
+        overlayCheck.style.marginTop = "0"
+        overlayCheck.checked = false
+        overlayCheck.addEventListener("change", () =>
+        {
+            showSkeletonOverlay = overlayCheck.checked
+            updateAllSvgOverlays()
+        })
+        const overlayCheckText = document.createElement("span")
+        overlayCheckText.classList.add("form-check-label")
+        overlayCheckText.textContent = "Overlay"
+        overlayCheckText.style.fontSize = "11px"
+        overlayCheckLabel.appendChild(overlayCheck)
+        overlayCheckLabel.appendChild(overlayCheckText)
+        if (isYoloSkeleton)
+        {
+            imagesLi.appendChild(overlayCheckLabel)
+        }
+
         addEventListenerWithId(imagesButton, "click", "show_images", (e) => {
             e.preventDefault()
             showContent(
@@ -445,8 +483,26 @@ export function updateProjects(responseJson, clear)
                                 imageCardDiv.style.verticalAlign = "top"
 
                                 const imageBlock = document.createElement("div")
+                                imageBlock.style.position = "relative"
                                 prepareImage(imageBlock, image, pf)
                                 imageBlock.classList.add("card-img-top")
+
+                                // Annotation chip
+                                if (image.has_skeleton)
+                                {
+                                    const chip = document.createElement("span")
+                                    chip.textContent = "\u2713"
+                                    chip.style.cssText = "position:absolute;top:4px;right:4px;background:#28a745;color:#fff;font-size:10px;font-weight:bold;padding:1px 6px;border-radius:10px;z-index:2;pointer-events:none;"
+                                    imageBlock.appendChild(chip)
+
+                                    // SVG overlay
+                                    const svgOverlay = document.createElement("img")
+                                    svgOverlay.src = `/get_skeleton_svg/${project.id_project}/${encodeURIComponent(image.image)}`
+                                    svgOverlay.style.cssText = "position:absolute;top:2.5pt;left:2.5pt;width:100%;height:100%;pointer-events:none;z-index:1;object-fit:fill;"
+                                    svgOverlay.style.display = showSkeletonOverlay ? "block" : "none"
+                                    imageBlock.appendChild(svgOverlay)
+                                    svgOverlays.push(svgOverlay)
+                                }
 
                                 const imageCardBody = document.createElement("div")
                                 imageCardBody.classList.add("card-body")
@@ -586,6 +642,22 @@ export function updateProjects(responseJson, clear)
                                         imageBlock.style.cursor = "pointer"
                                         imageBlock.innerHTML = ""
                                         toolbar.remove()
+
+                                        // Restore annotation chip and SVG overlay
+                                        if (image.has_skeleton)
+                                        {
+                                            const chip = document.createElement("span")
+                                            chip.textContent = "\u2713"
+                                            chip.style.cssText = "position:absolute;top:4px;right:4px;background:#28a745;color:#fff;font-size:10px;font-weight:bold;padding:1px 6px;border-radius:10px;z-index:2;pointer-events:none;"
+                                            imageBlock.appendChild(chip)
+
+                                            const svgOverlay = document.createElement("img")
+                                            svgOverlay.src = `/get_skeleton_svg/${project.id_project}/${encodeURIComponent(image.image)}?t=${Date.now()}`
+                                            svgOverlay.style.cssText = "position:absolute;top:2.5pt;left:2.5pt;width:100%;height:100%;pointer-events:none;z-index:1;object-fit:fill;"
+                                            svgOverlay.style.display = showSkeletonOverlay ? "block" : "none"
+                                            imageBlock.appendChild(svgOverlay)
+                                            svgOverlays.push(svgOverlay)
+                                        }
                                     })
 
                                     // --- Prev / Next image navigation ---
@@ -639,7 +711,7 @@ export function updateProjects(responseJson, clear)
                                     }
 
                                     const prevImageBtn = document.createElement("button")
-                                    prevImageBtn.classList.add("btn", "btn-sm", "btn-secondary", "ms-auto")
+                                    prevImageBtn.classList.add("btn", "btn-sm", "btn-secondary", "ms-auto", "me-1")
                                     prevImageBtn.textContent = "\u2190"
                                     prevImageBtn.title = "Previous image"
                                     addEventListenerWithId(prevImageBtn, "click", "prev_image", () => navigateImage("prev"))

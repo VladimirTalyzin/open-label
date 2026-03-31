@@ -4,11 +4,13 @@ import {addEventListenerWithId, removeEventListenerWithId} from "./events.js"
 
 const MASK_PAINT_COLOR = "rgb(30, 100, 255)"
 const MAX_UNDO = 30
+let skeletonClipboard = null
 
 export function setupSkeletonMode(
     {
         project, image, imageBlock, fullImage, fullImageContainer,
         imageCardDiv, buttons, zoomInButton, zoomOutButton, saveButton,
+        prevImageBtn, nextImageBtn,
         closeButtonEl, blockButtons, imagesDiv
     }
 )
@@ -115,9 +117,20 @@ export function setupSkeletonMode(
     addSkelBtn.title = "Add Skeleton"
 
     const delSkelBtn = document.createElement("button")
-    delSkelBtn.classList.add("btn", "btn-sm", "btn-secondary", "me-2")
+    delSkelBtn.classList.add("btn", "btn-sm", "btn-secondary", "me-1")
     delSkelBtn.textContent = "\u2715 Delete"
     delSkelBtn.title = "Delete Selected Skeleton (or double-click)"
+
+    const copySkelBtn = document.createElement("button")
+    copySkelBtn.classList.add("btn", "btn-sm", "btn-secondary", "me-1")
+    copySkelBtn.textContent = "Copy"
+    copySkelBtn.title = "Copy all skeletons from this image"
+
+    const pasteSkelBtn = document.createElement("button")
+    pasteSkelBtn.classList.add("btn", "btn-sm", "btn-secondary", "me-2")
+    pasteSkelBtn.textContent = "Paste"
+    pasteSkelBtn.title = "Paste skeletons from clipboard"
+    pasteSkelBtn.disabled = !skeletonClipboard
 
     const brushBtn = document.createElement("button")
     brushBtn.classList.add("btn", "btn-sm", "btn-secondary", "me-1")
@@ -207,12 +220,14 @@ export function setupSkeletonMode(
     buttons.push(
         zoomInButton, zoomOutButton,
         addSkelBtn, delSkelBtn,
+        copySkelBtn, pasteSkelBtn,
         brushBtn, eraserBtn, brushSizeSelect,
         sep,
         undoBtn, redoBtn,
         showNamesLabel,
         ...skelLabelButtons,
         saveButton,
+        prevImageBtn, nextImageBtn,
         closeButtonEl
     )
 
@@ -264,6 +279,33 @@ export function setupSkeletonMode(
             return
         }
         annotator.deleteSelected()
+    })
+
+    addEventListenerWithId(copySkelBtn, "click", "copy_skeleton", () =>
+    {
+        if (!annotator)
+        {
+            return
+        }
+        const annotations = annotator.getAnnotations()
+        if (annotations.length === 0)
+        {
+            return
+        }
+        skeletonClipboard = JSON.parse(JSON.stringify(annotations))
+        pasteSkelBtn.disabled = false
+    })
+
+    addEventListenerWithId(pasteSkelBtn, "click", "paste_skeleton", () =>
+    {
+        if (!annotator || !skeletonClipboard)
+        {
+            return
+        }
+        pushUndo("skeleton")
+        annotator.setAnnotations(JSON.parse(JSON.stringify(skeletonClipboard)))
+        skelUnsaved = true
+        saveButton.disabled = false
     })
 
     addEventListenerWithId(brushBtn, "click", "skel_brush", () =>

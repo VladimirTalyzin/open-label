@@ -238,6 +238,81 @@ export function updateProjects(responseJson, clear)
 
         settingsDiv.appendChild(exportButton)
 
+        const recalcButton = document.createElement("button")
+        recalcButton.classList.add("btn", "btn-outline-warning", "mb-4", "me-2")
+        recalcButton.textContent = "Recalculate previews"
+
+        addEventListenerWithId(recalcButton, "click", "recalculate_previews", () =>
+        {
+            const overlay = document.createElement("div")
+            overlay.classList.add("upload-progress-overlay")
+
+            const panel = document.createElement("div")
+            panel.classList.add("upload-progress-panel")
+
+            const title = document.createElement("h5")
+            title.textContent = "Пересчёт превью"
+
+            const progressWrapper = document.createElement("div")
+            progressWrapper.classList.add("progress")
+
+            const progressBar = document.createElement("div")
+            progressBar.classList.add("progress-bar", "progress-bar-striped", "progress-bar-animated")
+            progressBar.style.width = "0%"
+            progressBar.textContent = "0%"
+            progressWrapper.appendChild(progressBar)
+
+            const statusText = document.createElement("div")
+            statusText.classList.add("upload-status")
+            statusText.textContent = "Запуск..."
+
+            panel.appendChild(title)
+            panel.appendChild(progressWrapper)
+            panel.appendChild(statusText)
+            overlay.appendChild(panel)
+            document.body.appendChild(overlay)
+
+            recalcButton.disabled = true
+
+            const eventSource = new EventSource(`/regenerate_previews/${project.id_project}`)
+
+            eventSource.onmessage = (event) =>
+            {
+                const data = JSON.parse(event.data)
+
+                if (data.done)
+                {
+                    eventSource.close()
+                    progressBar.classList.remove("progress-bar-animated")
+                    progressBar.classList.add("bg-success")
+                    progressBar.style.width = "100%"
+                    progressBar.textContent = "100%"
+                    statusText.textContent = `Готово: ${data.total} изображений`
+                    recalcButton.disabled = false
+                    setTimeout(() => overlay.remove(), 2000)
+                }
+                else
+                {
+                    const percent = Math.round((data.current / data.total) * 100)
+                    progressBar.style.width = `${percent}%`
+                    progressBar.textContent = `${percent}%`
+                    statusText.textContent = `${data.current} / ${data.total}: ${data.image}`
+                }
+            }
+
+            eventSource.onerror = () =>
+            {
+                eventSource.close()
+                progressBar.classList.remove("progress-bar-animated")
+                progressBar.classList.add("bg-danger")
+                statusText.textContent = "Ошибка при пересчёте"
+                recalcButton.disabled = false
+                setTimeout(() => overlay.remove(), 3000)
+            }
+        })
+
+        settingsDiv.appendChild(recalcButton)
+
         const deleteButton = document.createElement("button")
         deleteButton.classList.add("btn", "btn-danger", "mb-4")
         deleteButton.textContent = "Delete project"
@@ -354,7 +429,6 @@ export function updateProjects(responseJson, clear)
                                 imageObject.style.backgroundRepeat = "no-repeat"
                                 imageObject.style.height = `${imageData.preview_height}px`
                                 imageObject.style.width = imagesWidth
-                                imageObject.style.borderRadius = "2.5pt"
                                 imageObject.style.marginTop = "2.5pt"
                                 imageObject.style.marginLeft = "2.5pt"
                                 imageObject.style.border = "none"
@@ -514,11 +588,74 @@ export function updateProjects(responseJson, clear)
                                         toolbar.remove()
                                     })
 
+                                    // --- Prev / Next image navigation ---
+                                    const navigateImage = (direction) =>
+                                    {
+                                        const currentZoom = fullImage.zoom_level
+                                        let target = direction === "next"
+                                            ? imageCardDiv.nextElementSibling
+                                            : imageCardDiv.previousElementSibling
+                                        while (target && !target.classList.contains("image-tile-card"))
+                                        {
+                                            target = direction === "next"
+                                                ? target.nextElementSibling
+                                                : target.previousElementSibling
+                                        }
+                                        if (!target) return
+
+                                        closeButtonEl.click()
+
+                                        const targetImageBlock = target.querySelector(".card-img-top")
+                                        if (!targetImageBlock) return
+                                        targetImageBlock.click()
+
+                                        if (currentZoom !== 100)
+                                        {
+                                            const newImg = target.querySelector(".card-img-top img")
+                                            if (newImg)
+                                            {
+                                                const applyZoom = () =>
+                                                {
+                                                    newImg.zoom_level = currentZoom
+                                                    newImg.style.width = currentZoom + "%"
+                                                    const canvases = target.querySelector(".card-img-top").querySelectorAll("canvas")
+                                                    for (const canvas of canvases)
+                                                    {
+                                                        updateCanvasZoom(newImg, canvas)
+                                                    }
+                                                }
+                                                if (newImg.complete && newImg.naturalWidth > 0)
+                                                {
+                                                    requestAnimationFrame(applyZoom)
+                                                }
+                                                else
+                                                {
+                                                    newImg.addEventListener("load", () => requestAnimationFrame(applyZoom), {once: true})
+                                                }
+                                            }
+                                        }
+
+                                        target.scrollIntoView({behavior: "smooth", block: "start"})
+                                    }
+
+                                    const prevImageBtn = document.createElement("button")
+                                    prevImageBtn.classList.add("btn", "btn-sm", "btn-secondary")
+                                    prevImageBtn.textContent = "\u2190"
+                                    prevImageBtn.title = "Previous image"
+                                    addEventListenerWithId(prevImageBtn, "click", "prev_image", () => navigateImage("prev"))
+
+                                    const nextImageBtn = document.createElement("button")
+                                    nextImageBtn.classList.add("btn", "btn-sm", "btn-secondary", "me-1")
+                                    nextImageBtn.textContent = "\u2192"
+                                    nextImageBtn.title = "Next image"
+                                    addEventListenerWithId(nextImageBtn, "click", "next_image", () => navigateImage("next"))
+
                                     if (projectType === "yolo-skeleton")
                                     {
                                         skeletonCleanup = setupSkeletonMode({
                                             project, image, imageBlock, fullImage, fullImageContainer,
                                             imageCardDiv, buttons, zoomInButton, zoomOutButton, saveButton,
+                                            prevImageBtn, nextImageBtn,
                                             closeButtonEl, blockButtons, imagesDiv
                                         })
                                     }
@@ -1268,6 +1405,7 @@ export function updateProjects(responseJson, clear)
                                             ...labelButtons,
                                             predictObjectsButton, predictRectangleButton,
                                             clearCanvasButton, saveButton,
+                                            prevImageBtn, nextImageBtn,
                                             closeButtonEl
                                         )
                                     }
@@ -1424,6 +1562,22 @@ export function updateProjects(responseJson, clear)
                                             statusText.textContent = `${uploaded} / ${files.length}`
                                             errorsDiv.innerHTML = errors.map(e => `<div>${e}</div>`).join("")
                                         }
+                                    }
+
+                                    if (showProgress && progressBar)
+                                    {
+                                        statusText.textContent = "Генерация all_previews.png..."
+                                        progressBar.style.width = "100%"
+                                        progressBar.textContent = "100%"
+                                    }
+
+                                    try
+                                    {
+                                        await fetch(`/rebuild_all_previews/${project.id_project}`)
+                                    }
+                                    catch (err)
+                                    {
+                                        console.error("Error rebuilding all_previews:", err)
                                     }
 
                                     if (overlay)

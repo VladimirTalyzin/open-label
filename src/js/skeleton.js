@@ -4,7 +4,7 @@ import {getMouseCoordinatesCanvas} from "./canvas.js"
 const EDITOR_WIDTH = 500
 const EDITOR_HEIGHT = 400
 const POINT_RADIUS_EDITOR = 10
-const POINT_RADIUS_ANNOT = 6
+const POINT_RADIUS_ANNOT = 10
 const HANDLE_SIZE = 10
 const ROTATION_OFFSET = 30
 const PAD = 12
@@ -107,6 +107,8 @@ export function renderSkeletonEditor(container, skeletonData, onSave)
     let showNames = false
     let canvasW = EDITOR_WIDTH
     let canvasH = EDITOR_HEIGHT
+    let panX = 0, panY = 0, zoomLevel = 1
+    let panning = false, panStartX = 0, panStartY = 0, panStartPanX = 0, panStartPanY = 0
 
     // --- Undo / Redo ---
     const MAX_HISTORY = 50
@@ -255,6 +257,8 @@ export function renderSkeletonEditor(container, skeletonData, onSave)
             p.x *= scaleX
             p.y *= scaleY
         }
+        panX *= scaleX
+        panY *= scaleY
         rightPanel.style.maxHeight = (canvasH + 40) + "px"
         render()
     })
@@ -297,7 +301,8 @@ export function renderSkeletonEditor(container, skeletonData, onSave)
     const tools = [
         {id: "add_point", label: "Add Point", icon: "+"},
         {id: "connect", label: "Connect", icon: "\u2014"},
-        {id: "select", label: "Move", icon: "\u2725"}
+        {id: "select", label: "Move", icon: "\u2725"},
+        {id: "pan", label: "Pan", icon: "\u270B"}
     ]
     const toolBtns = {}
 
@@ -315,7 +320,7 @@ export function renderSkeletonEditor(container, skeletonData, onSave)
                 b.classList.toggle("btn-secondary", id === mode)
                 b.classList.toggle("btn-outline-secondary", id !== mode)
             }
-            const cursors = {add_point: "crosshair", connect: "pointer", select: "grab"}
+            const cursors = {add_point: "crosshair", connect: "pointer", select: "grab", pan: "grab"}
             canvas.style.cursor = cursors[mode] || "default"
         })
         toolbar.appendChild(btn)
@@ -350,6 +355,22 @@ export function renderSkeletonEditor(container, skeletonData, onSave)
     sep2.style.width = "8px"
     toolbar.appendChild(sep2)
 
+    // Fit to center button
+    const fitBtn = document.createElement("button")
+    fitBtn.classList.add("btn", "btn-sm", "btn-outline-secondary")
+    fitBtn.textContent = "\u2316"
+    fitBtn.title = "Fit skeleton to view"
+    addEventListenerWithId(fitBtn, "click", "skel_fit", () =>
+    {
+        fitToCenter()
+    })
+    toolbar.appendChild(fitBtn)
+
+    // Separator
+    const sep3 = document.createElement("span")
+    sep3.style.width = "8px"
+    toolbar.appendChild(sep3)
+
     // Show names checkbox
     const namesLabel = document.createElement("label")
     namesLabel.classList.add("form-check", "form-check-inline", "mb-0", "ms-1")
@@ -370,6 +391,45 @@ export function renderSkeletonEditor(container, skeletonData, onSave)
     namesLabel.appendChild(namesCheckbox)
     namesLabel.appendChild(namesText)
     toolbar.appendChild(namesLabel)
+
+    // --- Pan / Zoom ---
+    function fitToCenter()
+    {
+        if (points.length === 0)
+        {
+            panX = 0
+            panY = 0
+            zoomLevel = 1
+            render()
+            return
+        }
+        const bbox = getSkeletonBBox(points)
+        if (!bbox)
+        {
+            return
+        }
+        const padding = 40
+        const availW = canvasW - padding * 2
+        const availH = canvasH - padding * 2
+        const scaleX = bbox.width > 0 ? availW / bbox.width : 1
+        const scaleY = bbox.height > 0 ? availH / bbox.height : 1
+        zoomLevel = Math.min(scaleX, scaleY, 3)
+        const cx = bbox.minX + bbox.width / 2
+        const cy = bbox.minY + bbox.height / 2
+        panX = canvasW / 2 - cx * zoomLevel
+        panY = canvasH / 2 - cy * zoomLevel
+        render()
+    }
+
+    function applyZoom(delta, centerX, centerY)
+    {
+        const oldZoom = zoomLevel
+        const factor = delta > 0 ? 0.9 : 1.1
+        zoomLevel = Math.max(0.1, Math.min(10, zoomLevel * factor))
+        panX = centerX - (centerX - panX) * (zoomLevel / oldZoom)
+        panY = centerY - (centerY - panY) * (zoomLevel / oldZoom)
+        render()
+    }
 
     // --- Render ---
     function render()
@@ -394,8 +454,12 @@ export function renderSkeletonEditor(container, skeletonData, onSave)
             ctx.stroke()
         }
 
+        ctx.save()
+        ctx.translate(panX, panY)
+        ctx.scale(zoomLevel, zoomLevel)
+
         ctx.strokeStyle = "#888"
-        ctx.lineWidth = 2
+        ctx.lineWidth = 2 / zoomLevel
         for (const [idx1, idx2] of connections)
         {
             const p1 = points[idx1]
@@ -409,39 +473,41 @@ export function renderSkeletonEditor(container, skeletonData, onSave)
             }
         }
 
+        const r = POINT_RADIUS_EDITOR / zoomLevel
         for (let i = 0; i < points.length; i++)
         {
             const p = points[i]
             ctx.beginPath()
-            ctx.arc(p.x, p.y, POINT_RADIUS_EDITOR, 0, Math.PI * 2)
+            ctx.arc(p.x, p.y, r, 0, Math.PI * 2)
             ctx.fillStyle = i === connectFirstIdx ? "#4CAF50" : "#2196F3"
             ctx.fill()
             ctx.strokeStyle = "#fff"
-            ctx.lineWidth = 2
+            ctx.lineWidth = 2 / zoomLevel
             ctx.stroke()
 
             ctx.fillStyle = "#fff"
-            ctx.font = "bold 10px sans-serif"
+            ctx.font = `bold ${10 / zoomLevel}px sans-serif`
             ctx.textAlign = "center"
             ctx.textBaseline = "middle"
             ctx.fillText(i.toString(), p.x, p.y)
 
             if (showNames && p.name)
             {
-                const nameFontSize = Math.max(9, Math.min(18, Math.round(Math.min(canvasW, canvasH) / 30)))
+                const nameFontSize = Math.max(9, Math.min(18, Math.round(Math.min(canvasW, canvasH) / 30))) / zoomLevel
                 ctx.font = `${nameFontSize}px sans-serif`
                 ctx.textAlign = "left"
                 ctx.textBaseline = "middle"
-                const nameX = p.x + POINT_RADIUS_EDITOR + 4
+                const nameX = p.x + r + 4 / zoomLevel
                 const nameY = p.y
                 const tm = ctx.measureText(p.name)
-                const padX = 3, padY = 2
+                const padX = 3 / zoomLevel, padY = 2 / zoomLevel
                 ctx.fillStyle = "rgba(255,255,255,0.7)"
                 ctx.fillRect(nameX - padX, nameY - nameFontSize / 2 - padY, tm.width + padX * 2, nameFontSize + padY * 2)
                 ctx.fillStyle = "#222"
                 ctx.fillText(p.name, nameX, nameY)
             }
         }
+        ctx.restore()
     }
 
     function deletePoint(idx)
@@ -514,14 +580,25 @@ export function renderSkeletonEditor(container, skeletonData, onSave)
         const r = canvas.getBoundingClientRect()
         const scaleX = canvas.width / r.width
         const scaleY = canvas.height / r.height
+        const cx = (e.clientX - r.left) * scaleX
+        const cy = (e.clientY - r.top) * scaleY
+        return {x: (cx - panX) / zoomLevel, y: (cy - panY) / zoomLevel}
+    }
+
+    function canvasCoords(e)
+    {
+        const r = canvas.getBoundingClientRect()
+        const scaleX = canvas.width / r.width
+        const scaleY = canvas.height / r.height
         return {x: (e.clientX - r.left) * scaleX, y: (e.clientY - r.top) * scaleY}
     }
 
     function findAt(x, y)
     {
+        const hitR = POINT_RADIUS_EDITOR * 1.5 / zoomLevel
         for (let i = points.length - 1; i >= 0; i--)
         {
-            if (dist(points[i].x, points[i].y, x, y) <= POINT_RADIUS_EDITOR * 1.5)
+            if (dist(points[i].x, points[i].y, x, y) <= hitR)
             {
                 return i
             }
@@ -580,6 +657,16 @@ export function renderSkeletonEditor(container, skeletonData, onSave)
             draggingIdx = foundIdx
             canvas.style.cursor = "grabbing"
         }
+        else if (mode === "pan")
+        {
+            panning = true
+            const cc = canvasCoords(e)
+            panStartX = cc.x
+            panStartY = cc.y
+            panStartPanX = panX
+            panStartPanY = panY
+            canvas.style.cursor = "grabbing"
+        }
     })
 
     addEventListenerWithId(canvas, "mousemove", "skel_ed_mm", (e) =>
@@ -590,10 +677,17 @@ export function renderSkeletonEditor(container, skeletonData, onSave)
             const pt = points[draggingIdx]
             if (pt)
             {
-                pt.x = Math.max(0, Math.min(canvas.width, Math.round(x)))
-                pt.y = Math.max(0, Math.min(canvas.height, Math.round(y)))
+                pt.x = Math.round(x)
+                pt.y = Math.round(y)
                 render()
             }
+        }
+        else if (mode === "pan" && panning)
+        {
+            const cc = canvasCoords(e)
+            panX = panStartPanX + (cc.x - panStartX)
+            panY = panStartPanY + (cc.y - panStartY)
+            render()
         }
     })
 
@@ -605,7 +699,19 @@ export function renderSkeletonEditor(container, skeletonData, onSave)
             canvas.style.cursor = "grab"
             commitAction()
         }
+        if (panning)
+        {
+            panning = false
+            canvas.style.cursor = "grab"
+        }
     })
+
+    canvas.addEventListener("wheel", (e) =>
+    {
+        e.preventDefault()
+        const cc = canvasCoords(e)
+        applyZoom(e.deltaY, cc.x, cc.y)
+    }, {passive: false})
 
     // --- Text editor ---
     const textArea = document.createElement("textarea")
@@ -635,6 +741,7 @@ export function renderSkeletonEditor(container, skeletonData, onSave)
             }
             undoBtn.style.display = "none"
             redoBtn.style.display = "none"
+            fitBtn.style.display = "none"
             namesLabel.style.display = "none"
         }
         else
@@ -667,6 +774,7 @@ export function renderSkeletonEditor(container, skeletonData, onSave)
             }
             undoBtn.style.display = ""
             redoBtn.style.display = ""
+            fitBtn.style.display = ""
             namesLabel.style.display = ""
             render()
             updatePointList()
@@ -735,7 +843,7 @@ export function createSkeletonAnnotator(canvas, template, labels, onBeforeChange
     {
         annotations = (data || []).map(a => ({
             label: a.label || "object",
-            points: (a.points || []).map(p => ({name: p.name || "", x: p.x, y: p.y})),
+            points: (a.points || []).map(p => ({name: p.name || "", x: p.x, y: p.y, visible: p.visible !== undefined ? p.visible : 2})),
             bboxPad: a.bboxPad || {...DEFAULT_PAD}
         }))
         selectedIdx = -1
@@ -779,7 +887,8 @@ export function createSkeletonAnnotator(canvas, template, labels, onBeforeChange
         const pts = template.points.map(tp => ({
             name: tp.name || "",
             x: cx + (tp.x - tcx) * scale,
-            y: cy + (tp.y - tcy) * scale
+            y: cy + (tp.y - tcy) * scale,
+            visible: 2
         }))
 
         annotations.push({
@@ -838,7 +947,6 @@ export function createSkeletonAnnotator(canvas, template, labels, onBeforeChange
             }
 
             // --- Connections ---
-            ctx.globalAlpha = sel ? 1.0 : 0.6
             ctx.strokeStyle = color
             ctx.lineWidth = sel ? 3 : 2
             for (const [idx1, idx2] of conns)
@@ -847,37 +955,72 @@ export function createSkeletonAnnotator(canvas, template, labels, onBeforeChange
                 const p2 = skel.points[idx2]
                 if (p1 && p2)
                 {
+                    const anyHidden = (p1.visible !== undefined && p1.visible < 2) || (p2.visible !== undefined && p2.visible < 2)
+                    ctx.globalAlpha = anyHidden ? (sel ? 0.45 : 0.25) : (sel ? 1.0 : 0.6)
+                    ctx.setLineDash(anyHidden ? [6, 4] : [])
                     ctx.beginPath()
                     ctx.moveTo(p1.x, p1.y)
                     ctx.lineTo(p2.x, p2.y)
                     ctx.stroke()
                 }
             }
+            ctx.setLineDash([])
 
             // --- Points ---
             const pr = sel ? POINT_RADIUS_ANNOT + 2 : POINT_RADIUS_ANNOT
             for (let pi = 0; pi < skel.points.length; pi++)
             {
                 const p = skel.points[pi]
+                const isHidden = p.visible !== undefined && p.visible < 2
+
                 ctx.beginPath()
                 ctx.arc(p.x, p.y, pr, 0, Math.PI * 2)
-                ctx.fillStyle = color
-                ctx.globalAlpha = sel ? 1.0 : 0.6
-                ctx.fill()
-                ctx.strokeStyle = "#fff"
-                ctx.lineWidth = 1.5
-                ctx.stroke()
+                if (isHidden)
+                {
+                    ctx.fillStyle = "rgba(0,0,0,0.25)"
+                    ctx.globalAlpha = sel ? 0.7 : 0.4
+                    ctx.fill()
+                    ctx.strokeStyle = color
+                    ctx.lineWidth = 2
+                    ctx.setLineDash([3, 2])
+                    ctx.stroke()
+                    ctx.setLineDash([])
 
-                ctx.fillStyle = "#fff"
-                ctx.font = `bold ${sel ? 10 : 8}px sans-serif`
-                ctx.textAlign = "center"
-                ctx.textBaseline = "middle"
-                ctx.globalAlpha = 1.0
-                ctx.fillText(pi.toString(), p.x, p.y)
+                    // Draw X mark
+                    const xr = pr * 0.5
+                    ctx.beginPath()
+                    ctx.moveTo(p.x - xr, p.y - xr)
+                    ctx.lineTo(p.x + xr, p.y + xr)
+                    ctx.moveTo(p.x + xr, p.y - xr)
+                    ctx.lineTo(p.x - xr, p.y + xr)
+                    ctx.strokeStyle = "#fff"
+                    ctx.lineWidth = 1.5
+                    ctx.globalAlpha = 1.0
+                    ctx.stroke()
+                }
+                else
+                {
+                    ctx.fillStyle = color
+                    ctx.globalAlpha = sel ? 1.0 : 0.6
+                    ctx.fill()
+                    ctx.strokeStyle = "#fff"
+                    ctx.lineWidth = 1.5
+                    ctx.stroke()
+                }
+
+                if (!isHidden)
+                {
+                    ctx.fillStyle = "#fff"
+                    ctx.font = `bold ${sel ? 14 : 12}px sans-serif`
+                    ctx.textAlign = "center"
+                    ctx.textBaseline = "middle"
+                    ctx.globalAlpha = 1.0
+                    ctx.fillText(pi.toString(), p.x, p.y)
+                }
 
                 if (showNames && p.name)
                 {
-                    const nameFontSize = Math.max(10, Math.min(22, Math.round(Math.min(canvas.width, canvas.height) / 40)))
+                    const nameFontSize = Math.max(13, Math.min(22, Math.round(Math.min(canvas.width, canvas.height) / 40)))
                     ctx.font = `${nameFontSize}px sans-serif`
                     ctx.textAlign = "left"
                     ctx.textBaseline = "middle"
@@ -1221,12 +1364,37 @@ export function createSkeletonAnnotator(canvas, template, labels, onBeforeChange
         }
     })
 
+    addEventListenerWithId(canvas, "contextmenu", "sk_ctx", (e) =>
+    {
+        e.preventDefault()
+        const {mouse_x: mx, mouse_y: my} = getMouseCoordinatesCanvas(e, canvas)
+        // Check all skeletons for point hit
+        for (let i = annotations.length - 1; i >= 0; i--)
+        {
+            const skel = annotations[i]
+            for (let pi = skel.points.length - 1; pi >= 0; pi--)
+            {
+                if (dist(mx, my, skel.points[pi].x, skel.points[pi].y) <= POINT_HIT)
+                {
+                    onBeforeChange()
+                    const p = skel.points[pi]
+                    p.visible = (p.visible === undefined || p.visible === 2) ? 1 : 2
+                    selectedIdx = i
+                    render()
+                    onChanged()
+                    return
+                }
+            }
+        }
+    })
+
     function destroy()
     {
         removeEventListenerWithId(canvas, "sk_md")
         removeEventListenerWithId(canvas, "sk_mm")
         removeEventListenerWithId(canvas, "sk_mu")
         removeEventListenerWithId(canvas, "sk_dc")
+        removeEventListenerWithId(canvas, "sk_ctx")
     }
 
     return {setAnnotations, getAnnotations, setCurrentLabel, setShowNames, addSkeleton, deleteSelected, render, destroy}

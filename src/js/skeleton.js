@@ -827,6 +827,131 @@ export function renderSkeletonEditor(container, skeletonData, onSave)
 
 // ==================== SKELETON ANNOTATOR ====================
 
+function reconcileAnnotationPoints(savedPoints, templatePoints)
+{
+    if (!templatePoints || templatePoints.length === 0)
+    {
+        return []
+    }
+    if (!savedPoints || savedPoints.length === 0)
+    {
+        return templatePoints.map(tp => ({name: tp.name || "", x: tp.x, y: tp.y, visible: 2}))
+    }
+
+    // Build mapping: for each template point, find matching saved point
+    const usedSavedIndices = new Set()
+    const result = []
+
+    // First pass: match by name
+    const savedByName = {}
+    for (let si = 0; si < savedPoints.length; si++)
+    {
+        const name = savedPoints[si].name
+        if (name)
+        {
+            if (!savedByName[name])
+            {
+                savedByName[name] = []
+            }
+            savedByName[name].push(si)
+        }
+    }
+
+    const matched = new Array(templatePoints.length).fill(null)
+
+    for (let ti = 0; ti < templatePoints.length; ti++)
+    {
+        const tName = templatePoints[ti].name
+        if (tName && savedByName[tName] && savedByName[tName].length > 0)
+        {
+            const si = savedByName[tName].shift()
+            matched[ti] = si
+            usedSavedIndices.add(si)
+        }
+    }
+
+    // Second pass: match remaining by index
+    for (let ti = 0; ti < templatePoints.length; ti++)
+    {
+        if (matched[ti] !== null)
+        {
+            continue
+        }
+        if (ti < savedPoints.length && !usedSavedIndices.has(ti))
+        {
+            matched[ti] = ti
+            usedSavedIndices.add(ti)
+        }
+    }
+
+    // Compute transform from template to saved annotation for matched points
+    // We use matched points to derive scale + translate
+    const matchedPairs = []
+    for (let ti = 0; ti < templatePoints.length; ti++)
+    {
+        if (matched[ti] !== null)
+        {
+            matchedPairs.push({
+                tx: templatePoints[ti].x, ty: templatePoints[ti].y,
+                sx: savedPoints[matched[ti]].x, sy: savedPoints[matched[ti]].y
+            })
+        }
+    }
+
+    let offsetX = 0, offsetY = 0, scaleX = 1, scaleY = 1
+    if (matchedPairs.length >= 2)
+    {
+        // Compute bounding box of template matched points and saved matched points
+        let tMinX = Infinity, tMinY = Infinity, tMaxX = -Infinity, tMaxY = -Infinity
+        let sMinX = Infinity, sMinY = Infinity, sMaxX = -Infinity, sMaxY = -Infinity
+        for (const mp of matchedPairs)
+        {
+            tMinX = Math.min(tMinX, mp.tx); tMinY = Math.min(tMinY, mp.ty)
+            tMaxX = Math.max(tMaxX, mp.tx); tMaxY = Math.max(tMaxY, mp.ty)
+            sMinX = Math.min(sMinX, mp.sx); sMinY = Math.min(sMinY, mp.sy)
+            sMaxX = Math.max(sMaxX, mp.sx); sMaxY = Math.max(sMaxY, mp.sy)
+        }
+        const tW = tMaxX - tMinX, tH = tMaxY - tMinY
+        const sW = sMaxX - sMinX, sH = sMaxY - sMinY
+        scaleX = tW > 0.01 ? sW / tW : 1
+        scaleY = tH > 0.01 ? sH / tH : 1
+        const tCX = (tMinX + tMaxX) / 2, tCY = (tMinY + tMaxY) / 2
+        const sCX = (sMinX + sMaxX) / 2, sCY = (sMinY + sMaxY) / 2
+        offsetX = sCX - tCX * scaleX
+        offsetY = sCY - tCY * scaleY
+    }
+    else if (matchedPairs.length === 1)
+    {
+        offsetX = matchedPairs[0].sx - matchedPairs[0].tx
+        offsetY = matchedPairs[0].sy - matchedPairs[0].ty
+    }
+
+    for (let ti = 0; ti < templatePoints.length; ti++)
+    {
+        if (matched[ti] !== null)
+        {
+            const sp = savedPoints[matched[ti]]
+            result.push({
+                name: templatePoints[ti].name || sp.name || "",
+                x: sp.x, y: sp.y,
+                visible: sp.visible !== undefined ? sp.visible : 2
+            })
+        }
+        else
+        {
+            // New point: position using computed transform
+            result.push({
+                name: templatePoints[ti].name || "",
+                x: templatePoints[ti].x * scaleX + offsetX,
+                y: templatePoints[ti].y * scaleY + offsetY,
+                visible: 2
+            })
+        }
+    }
+
+    return result
+}
+
 export function createSkeletonAnnotator(canvas, template, labels, onBeforeChange, onChanged)
 {
     let annotations = []
@@ -841,11 +966,16 @@ export function createSkeletonAnnotator(canvas, template, labels, onBeforeChange
 
     function setAnnotations(data)
     {
-        annotations = (data || []).map(a => ({
-            label: a.label || "object",
-            points: (a.points || []).map(p => ({name: p.name || "", x: p.x, y: p.y, visible: p.visible !== undefined ? p.visible : 2})),
-            bboxPad: a.bboxPad || {...DEFAULT_PAD}
-        }))
+        const tplPoints = template && template.points ? template.points : []
+        annotations = (data || []).map(a => {
+            const savedPts = (a.points || []).map(p => ({name: p.name || "", x: p.x, y: p.y, visible: p.visible !== undefined ? p.visible : 2}))
+            const reconciledPts = tplPoints.length > 0 ? reconcileAnnotationPoints(savedPts, tplPoints) : savedPts
+            return {
+                label: a.label || "object",
+                points: reconciledPts,
+                bboxPad: a.bboxPad || {...DEFAULT_PAD}
+            }
+        })
         selectedIdx = -1
         render()
     }

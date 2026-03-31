@@ -504,6 +504,7 @@ export function setupSkeletonMode(
                     if (resp.result === "ok")
                     {
                         skelUnsaved = false
+                        image.has_skeleton = data.length > 0
                     }
                 })
         }

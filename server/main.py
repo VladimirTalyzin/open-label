@@ -201,7 +201,10 @@ async def admin_create_user(request: Request, username: str = Form(...), passwor
 @app.post("/admin/users/delete", tags=["Admin"])
 async def admin_delete_user(request: Request, user_id: int = Form(...)):
     require_admin(request)
-    delete_user(user_id)
+    try:
+        delete_user(user_id)
+    except Exception as e:
+        raise HTTPException(status_code=400, detail=f"Error deleting user: {str(e)}")
     return JSONResponse(content={"result": "ok"})
 
 

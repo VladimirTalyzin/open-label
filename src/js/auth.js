@@ -191,57 +191,132 @@ function loadAdminData()
 
 function loadGroups()
 {
-    fetch("/admin/groups", {cache: "no-store"})
-        .then(r => r.json())
-        .then(data =>
+    Promise.all([
+        fetch("/admin/groups", {cache: "no-store"}).then(r => r.json()),
+        fetch("/admin/users", {cache: "no-store"}).then(r => r.json())
+    ]).then(([data, usersData]) =>
+    {
+        const container = document.getElementById("groups-list")
+        container.innerHTML = ""
+
+        const select = document.getElementById("new-user-group")
+        select.innerHTML = ""
+
+        const usersByGroup = {}
+        for (const user of usersData.users)
         {
-            const container = document.getElementById("groups-list")
-            container.innerHTML = ""
-
-            const select = document.getElementById("new-user-group")
-            select.innerHTML = ""
-
-            for (const group of data.groups)
+            if (!usersByGroup[user.group_id])
             {
-                const div = document.createElement("div")
-                div.classList.add("d-flex", "align-items-center", "justify-content-between", "mb-2", "p-2", "border", "rounded")
-
-                const nameSpan = document.createElement("span")
-                nameSpan.textContent = `${group.name} (id: ${group.id})`
-
-                const deleteBtn = document.createElement("button")
-                deleteBtn.classList.add("btn", "btn-danger", "btn-sm")
-                deleteBtn.textContent = "Delete"
-                deleteBtn.addEventListener("click", () =>
-                {
-                    const formData = new FormData()
-                    formData.append("group_id", group.id)
-                    fetch("/admin/groups/delete", {method: "POST", body: formData})
-                        .then(r => r.json())
-                        .then(result =>
-                        {
-                            if (result.result === "ok")
-                            {
-                                loadAdminData()
-                            }
-                            else
-                            {
-                                alert(result.detail || "Error deleting group")
-                            }
-                        })
-                        .catch(() => alert("Cannot delete group with users"))
-                })
-
-                div.appendChild(nameSpan)
-                div.appendChild(deleteBtn)
-                container.appendChild(div)
-
-                const option = document.createElement("option")
-                option.value = group.id
-                option.textContent = group.name
-                select.appendChild(option)
+                usersByGroup[user.group_id] = []
             }
-        })
+            usersByGroup[user.group_id].push(user)
+        }
+
+        for (const group of data.groups)
+        {
+            const card = document.createElement("div")
+            card.classList.add("mb-2", "p-2", "border", "rounded")
+
+            const header = document.createElement("div")
+            header.classList.add("d-flex", "align-items-center", "justify-content-between")
+
+            const nameSpan = document.createElement("span")
+            nameSpan.innerHTML = `<strong>${group.name}</strong> <small class="text-muted">(id: ${group.id})</small>`
+
+            const deleteBtn = document.createElement("button")
+            deleteBtn.classList.add("btn", "btn-danger", "btn-sm")
+            deleteBtn.textContent = "Delete"
+            deleteBtn.addEventListener("click", () =>
+            {
+                if (!confirm(`Delete group "${group.name}"?`))
+                {
+                    return
+                }
+                const formData = new FormData()
+                formData.append("group_id", group.id)
+                fetch("/admin/groups/delete", {method: "POST", body: formData})
+                    .then(r => r.json())
+                    .then(result =>
+                    {
+                        if (result.result === "ok")
+                        {
+                            loadAdminData()
+                        }
+                        else
+                        {
+                            alert(result.detail || "Error deleting group")
+                        }
+                    })
+                    .catch(() => alert("Error deleting group"))
+            })
+
+            header.appendChild(nameSpan)
+            header.appendChild(deleteBtn)
+            card.appendChild(header)
+
+            const groupUsers = usersByGroup[group.id] || []
+            if (groupUsers.length > 0)
+            {
+                const usersList = document.createElement("div")
+                usersList.classList.add("mt-2", "ms-3")
+
+                for (const user of groupUsers)
+                {
+                    const userDiv = document.createElement("div")
+                    userDiv.classList.add("d-flex", "align-items-center", "justify-content-between", "mb-1")
+
+                    const userSpan = document.createElement("span")
+                    userSpan.classList.add("text-muted", "small")
+                    userSpan.textContent = user.username
+
+                    const removeBtn = document.createElement("button")
+                    removeBtn.classList.add("btn", "btn-outline-danger", "btn-sm", "py-0", "px-1")
+                    removeBtn.textContent = "×"
+                    removeBtn.title = `Delete user "${user.username}"`
+                    removeBtn.addEventListener("click", () =>
+                    {
+                        if (!confirm(`Delete user "${user.username}" from group "${group.name}"?\nThe user will be deleted entirely.`))
+                        {
+                            return
+                        }
+                        const formData = new FormData()
+                        formData.append("user_id", user.id)
+                        fetch("/admin/users/delete", {method: "POST", body: formData})
+                            .then(r =>
+                            {
+                                if (!r.ok)
+                                {
+                                    throw new Error("Server error")
+                                }
+                                return r.json()
+                            })
+                            .then(() => loadAdminData())
+                            .catch(() => alert(`Error deleting user "${user.username}"`))
+                    })
+
+                    userDiv.appendChild(userSpan)
+                    userDiv.appendChild(removeBtn)
+                    usersList.appendChild(userDiv)
+                }
+
+                card.appendChild(usersList)
+            }
+            else
+            {
+                const emptyMsg = document.createElement("div")
+                emptyMsg.classList.add("mt-1", "ms-3", "text-muted", "small", "fst-italic")
+                emptyMsg.textContent = "No users"
+                card.appendChild(emptyMsg)
+            }
+
+            container.appendChild(card)
+
+            const option = document.createElement("option")
+            option.value = group.id
+            option.textContent = group.name
+            select.appendChild(option)
+        }
+    })
 
     // Add group button
     const addGroupBtn = document.getElementById("add-group-button")
@@ -294,8 +369,16 @@ function loadUsers()
                     const formData = new FormData()
                     formData.append("user_id", user.id)
                     fetch("/admin/users/delete", {method: "POST", body: formData})
-                        .then(r => r.json())
+                        .then(r =>
+                        {
+                            if (!r.ok)
+                            {
+                                throw new Error("Server error")
+                            }
+                            return r.json()
+                        })
                         .then(() => loadAdminData())
+                        .catch(() => alert(`Error deleting user "${user.username}"`))
                 })
 
                 div.appendChild(infoSpan)

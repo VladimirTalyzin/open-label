@@ -155,6 +155,11 @@ export function setupSkeletonMode(
     }
     brushSizeSelect.value = "15"
 
+    const editPointsBtn = document.createElement("button")
+    editPointsBtn.classList.add("btn", "btn-sm", "btn-primary", "me-1")
+    editPointsBtn.textContent = "\u2726"
+    editPointsBtn.title = "Edit skeleton points"
+
     const sep = document.createElement("span")
     sep.style.width = "8px"
     sep.style.display = "inline-block"
@@ -221,7 +226,7 @@ export function setupSkeletonMode(
         zoomInButton, zoomOutButton,
         addSkelBtn, delSkelBtn,
         copySkelBtn, pasteSkelBtn,
-        brushBtn, eraserBtn, brushSizeSelect,
+        editPointsBtn, brushBtn, eraserBtn, brushSizeSelect,
         sep,
         undoBtn, redoBtn,
         showNamesLabel,
@@ -235,6 +240,8 @@ export function setupSkeletonMode(
     function setActiveTool(tool)
     {
         activeTool = tool
+        editPointsBtn.classList.toggle("btn-secondary", tool !== "skeleton")
+        editPointsBtn.classList.toggle("btn-primary", tool === "skeleton")
         brushBtn.classList.toggle("btn-secondary", tool !== "brush")
         brushBtn.classList.toggle("btn-primary", tool === "brush")
         eraserBtn.classList.toggle("btn-secondary", tool !== "eraser")
@@ -306,6 +313,11 @@ export function setupSkeletonMode(
         annotator.setAnnotations(JSON.parse(JSON.stringify(skeletonClipboard)))
         skelUnsaved = true
         saveButton.disabled = false
+    })
+
+    addEventListenerWithId(editPointsBtn, "click", "skel_edit_points", () =>
+    {
+        setActiveTool("skeleton")
     })
 
     addEventListenerWithId(brushBtn, "click", "skel_brush", () =>

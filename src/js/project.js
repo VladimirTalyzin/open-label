@@ -569,7 +569,7 @@ export function updateProjects(responseJson, clear)
 
                                     // --- Close ---
                                     const closeButtonEl = document.createElement("button")
-                                    closeButtonEl.classList.add("btn", "btn-sm", "ms-auto")
+                                    closeButtonEl.classList.add("btn", "btn-sm")
                                     closeButtonEl.textContent = "\u2716"
                                     addEventListenerWithId(closeButtonEl, "click", "close_full_image", () =>
                                     {
@@ -639,7 +639,7 @@ export function updateProjects(responseJson, clear)
                                     }
 
                                     const prevImageBtn = document.createElement("button")
-                                    prevImageBtn.classList.add("btn", "btn-sm", "btn-secondary")
+                                    prevImageBtn.classList.add("btn", "btn-sm", "btn-secondary", "ms-auto")
                                     prevImageBtn.textContent = "\u2190"
                                     prevImageBtn.title = "Previous image"
                                     addEventListenerWithId(prevImageBtn, "click", "prev_image", () => navigateImage("prev"))

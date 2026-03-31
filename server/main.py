@@ -502,8 +502,6 @@ async def upload_image(id_project: int, image: UploadFile = File(...)):
         with open(settings_file, "w") as file_settings:
             dump(settings_data, file_settings)
 
-        update_all_previews(preview_path, preview_height, project_path)
-
         return JSONResponse(content={"result": "ok", "message": "Image uploaded successfully", "image_data": image_data})
 
     except Exception as exception:
@@ -984,6 +982,110 @@ async def get_preview(id_project: int):
         return StreamingResponse(parts_file(), media_type="image/png")
     else:
         raise HTTPException(status_code=404, detail="Preview image not found")
+
+
+@app.get("/rebuild_all_previews/{id_project}", tags=["Project"])
+async def rebuild_all_previews(id_project: int):
+    project_path, images_path, preview_path, masks_path, settings_file = get_all_path(id_project)
+
+    with open(settings_file, "r") as file_settings:
+        settings_data = load(file_settings)
+
+    images = settings_data.get("images", [])
+    all_previews_path = join_path(project_path, "all_previews.png")
+
+    if path.exists(all_previews_path):
+        remove(all_previews_path)
+
+    if not images:
+        return JSONResponse(content={"result": "ok"})
+
+    new_height = 0
+    preview_images = []
+    preview_heights = []
+    for image_data in images:
+        try:
+            preview_image = Image.open(join_path(preview_path, image_data["image"]))
+        except FileNotFoundError:
+            preview_image = Image.new("RGB", (PREVIEW_WIDTH, 90), color="white")
+            draw = ImageDraw.Draw(preview_image)
+            draw.text((10, 40), "Missing image", fill="black")
+
+        preview_images.append(preview_image)
+        _, preview_height = preview_image.size
+        new_height += preview_height
+        preview_heights.append(preview_height)
+
+    new_image = Image.new("RGB", (PREVIEW_WIDTH, new_height))
+    y_offset = 0
+    for idx, img in enumerate(preview_images):
+        new_image.paste(img, (0, y_offset))
+        y_offset += preview_heights[idx]
+
+    new_image.save(all_previews_path)
+    return JSONResponse(content={"result": "ok"})
+
+
+@app.get("/regenerate_previews/{id_project}", tags=["Project"])
+async def regenerate_previews(id_project: int):
+    project_path, images_path, preview_path, masks_path, settings_file = get_all_path(id_project)
+
+    image_files = [f for f in listdir(images_path) if f.lower().endswith(".png")]
+    total = len(image_files)
+
+    def generate():
+        import json as json_module
+
+        images = []
+        accumulated_height = 0
+
+        for idx, image_name in enumerate(sorted(image_files)):
+            image_path = join_path(images_path, image_name)
+
+            preview_file_path, preview_height = create_preview(image_name, image_path, preview_path)
+
+            image_data = {
+                "image": image_name,
+                "time": datetime.fromtimestamp(path.getmtime(image_path)).strftime("%Y-%m-%d %H:%M:%S"),
+                "preview_height": preview_height,
+                "accumulated_height": accumulated_height
+            }
+            accumulated_height += preview_height
+            images.append(image_data)
+
+            progress = json_module.dumps({"current": idx + 1, "total": total, "image": image_name})
+            yield f"data: {progress}\n\n"
+
+        # Build all_previews.png
+        all_previews_path = join_path(project_path, "all_previews.png")
+        if path.exists(all_previews_path):
+            remove(all_previews_path)
+
+        if images:
+            new_height = sum(img["preview_height"] for img in images)
+            new_image = Image.new("RGB", (PREVIEW_WIDTH, new_height))
+            y_offset = 0
+            for image_data in images:
+                preview_img = Image.open(join_path(preview_path, image_data["image"]))
+                new_image.paste(preview_img, (0, y_offset))
+                y_offset += image_data["preview_height"]
+            new_image.save(all_previews_path)
+
+        # Update settings
+        try:
+            with open(settings_file, "r") as f:
+                settings_data = load(f)
+            settings_data["images"] = images
+        except Exception:
+            settings_data = {"images": images}
+
+        with open(settings_file, "w") as f:
+            dump(settings_data, f)
+
+        done = json_module.dumps({"done": True, "total": total})
+        yield f"data: {done}\n\n"
+
+    return StreamingResponse(generate(), media_type="text/event-stream")
 
 
 @app.get("/delete_project/{id_project}", tags=["Project"])

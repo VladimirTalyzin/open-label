@@ -127,7 +127,7 @@ export function setupSkeletonMode(
     copySkelBtn.title = "Copy all skeletons from this image"
 
     const pasteSkelBtn = document.createElement("button")
-    pasteSkelBtn.classList.add("btn", "btn-sm", "btn-secondary", "me-2")
+    pasteSkelBtn.classList.add("btn", "btn-sm", "btn-secondary", "me-2", "skel-paste-btn")
     pasteSkelBtn.textContent = "Paste"
     pasteSkelBtn.title = "Paste skeletons from clipboard"
     pasteSkelBtn.disabled = !skeletonClipboard
@@ -300,7 +300,7 @@ export function setupSkeletonMode(
             return
         }
         skeletonClipboard = JSON.parse(JSON.stringify(annotations))
-        pasteSkelBtn.disabled = false
+        document.querySelectorAll(".skel-paste-btn").forEach(btn => btn.disabled = false)
     })
 
     addEventListenerWithId(pasteSkelBtn, "click", "paste_skeleton", () =>

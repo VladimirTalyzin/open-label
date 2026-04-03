@@ -71,6 +71,14 @@ export function updateProjects(responseJson, clear)
 
         imagesCount.appendChild(imagesCountSpan)
 
+        const annotatedCount = document.createElement("p")
+        annotatedCount.textContent = "Annotated: "
+
+        const annotatedCountSpan = document.createElement("span")
+        annotatedCountSpan.textContent = project.annotated_count
+
+        annotatedCount.appendChild(annotatedCountSpan)
+
         const projectButtons = document.createElement("ul")
         projectButtons.classList.add("nav", "project-tabs", "mt-3")
 
@@ -340,6 +348,7 @@ export function updateProjects(responseJson, clear)
         projectCardBody.appendChild(projectUuid)
         projectCardBody.appendChild(projectNameInput)
         projectCardBody.appendChild(imagesCount)
+        projectCardBody.appendChild(annotatedCount)
         const isYoloSkeleton = (project.project_type || "segmentation") === "yolo-skeleton"
         labelsLi.style.display = isYoloSkeleton ? "none" : ""
 

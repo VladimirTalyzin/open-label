@@ -472,6 +472,10 @@ export function updateProjects(responseJson, clear)
                                 imageObject.style.border = "none"
                             }
 
+                            let lastZoomLevel = 100
+                            let lastActiveTool = null
+                            let lastActiveLabel = null
+
                             const addImage = (imageVariable, previewFileVariable) =>
                             {
                                 const image = imageVariable
@@ -584,7 +588,28 @@ export function updateProjects(responseJson, clear)
                                     fullImage.src = `/image/${project.id_project}/${image.image}`
                                     fullImage.style.width = "100%"
                                     fullImage.style.height = "auto"
-                                    fullImage.zoom_level = 100
+                                    fullImage.zoom_level = lastZoomLevel
+
+                                    if (lastZoomLevel !== 100)
+                                    {
+                                        const applyInitialZoom = () =>
+                                        {
+                                            fullImage.style.width = lastZoomLevel + "%"
+                                            const canvases = imageBlock.querySelectorAll("canvas")
+                                            for (const canvas of canvases)
+                                            {
+                                                updateCanvasZoom(fullImage, canvas)
+                                            }
+                                        }
+                                        if (fullImage.complete && fullImage.naturalWidth > 0)
+                                        {
+                                            requestAnimationFrame(applyInitialZoom)
+                                        }
+                                        else
+                                        {
+                                            fullImage.addEventListener("load", () => requestAnimationFrame(applyInitialZoom), {once: true})
+                                        }
+                                    }
 
                                     fullImageContainer.appendChild(fullImage)
                                     imageBlock.appendChild(fullImageContainer)
@@ -632,6 +657,7 @@ export function updateProjects(responseJson, clear)
                                         if (skeletonCleanup) skeletonCleanup()
                                         blockButtons(null)
 
+                                        lastZoomLevel = fullImage.zoom_level
                                         fullImage.zoom_level = 100
                                         fullImage.style.width = "100%"
 
@@ -664,6 +690,8 @@ export function updateProjects(responseJson, clear)
                                     const navigateImage = (direction) =>
                                     {
                                         const currentZoom = fullImage.zoom_level
+                                        const currentLabel = lastActiveLabel
+                                        const currentTool = lastActiveTool
                                         let target = direction === "next"
                                             ? imageCardDiv.nextElementSibling
                                             : imageCardDiv.previousElementSibling
@@ -703,6 +731,25 @@ export function updateProjects(responseJson, clear)
                                                 else
                                                 {
                                                     newImg.addEventListener("load", () => requestAnimationFrame(applyZoom), {once: true})
+                                                }
+                                            }
+                                        }
+
+                                        // Restore active label and tool
+                                        if (currentLabel)
+                                        {
+                                            const newToolbar = target.querySelector(".toolbar")
+                                            if (newToolbar)
+                                            {
+                                                const newLabelBtn = newToolbar.querySelector(`button[label="${currentLabel}"]`)
+                                                if (newLabelBtn)
+                                                {
+                                                    newLabelBtn.click()
+                                                    if (currentTool)
+                                                    {
+                                                        const newToolBtn = newToolbar.querySelector(`button[data-tool-id="${currentTool}"]`)
+                                                        if (newToolBtn) newToolBtn.click()
+                                                    }
                                                 }
                                             }
                                         }
@@ -796,6 +843,7 @@ export function updateProjects(responseJson, clear)
                                         const brushButton = document.createElement("button")
                                         brushButton.classList.add("btn", "btn-sm", "btn-secondary", "me-1")
                                         brushButton.innerHTML = "\uD83D\uDD8C\uFE0F"
+                                        brushButton.setAttribute("data-tool-id", "brush")
                                         addEventListenerWithId(brushButton, "click", "brush_mode", () =>
                                         {
                                             getActiveLabel(imageCardDiv, (activeLabel) =>
@@ -808,6 +856,7 @@ export function updateProjects(responseJson, clear)
 
                                                 blockButtons(brushButton, "brush_mode", () =>
                                                 {
+                                                    lastActiveTool = null
                                                     brushSlider.remove()
                                                     hideLabelButtons(labelButtons, activeLabel, false)
                                                     removeEventListenerWithId(pngCanvas, "brush_mouse_down")
@@ -815,6 +864,7 @@ export function updateProjects(responseJson, clear)
                                                     removeEventListenerWithId(pngCanvas, "brush_mouse_up")
                                                 })
 
+                                                lastActiveTool = "brush"
                                                 hideLabelButtons(labelButtons, activeLabel, true)
                                                 activateCanvas(pngCanvas, vectorCanvas, true)
 
@@ -883,6 +933,7 @@ export function updateProjects(responseJson, clear)
                                         const eraserButton = document.createElement("button")
                                         eraserButton.classList.add("btn", "btn-sm", "btn-secondary", "me-1")
                                         eraserButton.innerHTML = "\uD83E\uDDFD"
+                                        eraserButton.setAttribute("data-tool-id", "eraser")
                                         addEventListenerWithId(eraserButton, "click", "eraser_mode", () =>
                                         {
                                             getActiveLabel(imageCardDiv, (activeLabel) =>
@@ -894,6 +945,7 @@ export function updateProjects(responseJson, clear)
 
                                                 blockButtons(eraserButton, "eraser_mode", () =>
                                                 {
+                                                    lastActiveTool = null
                                                     eraserSlider.remove()
                                                     hideLabelButtons(labelButtons, activeLabel, false)
                                                     removeEventListenerWithId(pngCanvas, "eraser_mouse_down")
@@ -901,6 +953,7 @@ export function updateProjects(responseJson, clear)
                                                     removeEventListenerWithId(pngCanvas, "eraser_mouse_up")
                                                 })
 
+                                                lastActiveTool = "eraser"
                                                 hideLabelButtons(labelButtons, activeLabel, true)
                                                 activateCanvas(pngCanvas, vectorCanvas, true)
 
@@ -970,6 +1023,7 @@ export function updateProjects(responseJson, clear)
                                         antiLabelButton.classList.add("btn", "btn-sm", "btn-secondary", "me-4")
                                         antiLabelButton.innerHTML = "\uD83D\uDEAB"
                                         antiLabelButton.title = "AntiLabel"
+                                        antiLabelButton.setAttribute("data-tool-id", "anti-label")
                                         addEventListenerWithId(antiLabelButton, "click", "anti_label_mode", () =>
                                             getActiveLabel(imageCardDiv, (activeLabel) =>
                                             {
@@ -979,12 +1033,14 @@ export function updateProjects(responseJson, clear)
 
                                                 blockButtons(antiLabelButton, "anti_label_mode", () =>
                                                 {
+                                                    lastActiveTool = null
                                                     removeEventListenerWithId(vectorCanvas, "anti_label_mouse_down")
                                                     removeEventListenerWithId(vectorCanvas, "anti_label_mouse_move")
                                                     removeEventListenerWithId(vectorCanvas, "anti_label_mouse_up")
                                                     removeEventListenerWithId(vectorCanvas, "anti_label_double_click")
                                                 })
 
+                                                lastActiveTool = "anti-label"
                                                 activateCanvas(pngCanvas, vectorCanvas, false)
 
                                                 if (vectorCanvas)
@@ -1242,6 +1298,7 @@ export function updateProjects(responseJson, clear)
                                                     {
                                                         labelButton.classList.remove("selected-label-button")
                                                         imageCardDiv.removeAttribute("active_label")
+                                                        lastActiveLabel = null
                                                         enableControls(true)
                                                     }
                                                     else
@@ -1249,6 +1306,7 @@ export function updateProjects(responseJson, clear)
                                                         labelButtons.forEach((lb) => lb.classList.remove("selected-label-button"))
                                                         labelButton.classList.add("selected-label-button")
                                                         imageCardDiv.setAttribute("active_label", newLabel)
+                                                        lastActiveLabel = newLabel
 
                                                         activateLabel(
                                                             project.id_project, image.image, newLabel,
@@ -1519,6 +1577,8 @@ export function updateProjects(responseJson, clear)
                                                 canvas.style.height = "auto"
                                             }
                                         }
+
+                                        lastZoomLevel = fullImage.zoom_level
                                     }
 
                                     addEventListenerWithId(zoomInButton, "click", "zoom_in", () => zoom(30))

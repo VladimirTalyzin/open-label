@@ -690,7 +690,7 @@ export function updateProjects(responseJson, clear)
                                     const navigateImage = (direction) =>
                                     {
                                         const currentZoom = fullImage.zoom_level
-                                        const currentLabel = lastActiveLabel
+                                        const currentLabel = lastActiveLabel || imageCardDiv.getAttribute("active_label")
                                         const currentTool = lastActiveTool
                                         let target = direction === "next"
                                             ? imageCardDiv.nextElementSibling
@@ -702,6 +702,12 @@ export function updateProjects(responseJson, clear)
                                                 : target.previousElementSibling
                                         }
                                         if (!target) return
+
+                                        // Force save before switching
+                                        if (!saveButton.disabled)
+                                        {
+                                            saveButton.click()
+                                        }
 
                                         closeButtonEl.click()
 
@@ -736,21 +742,21 @@ export function updateProjects(responseJson, clear)
                                         }
 
                                         // Restore active label and tool
-                                        if (currentLabel)
+                                        const newToolbar = target.querySelector(".toolbar")
+                                        if (newToolbar)
                                         {
-                                            const newToolbar = target.querySelector(".toolbar")
-                                            if (newToolbar)
+                                            if (currentLabel)
                                             {
                                                 const newLabelBtn = newToolbar.querySelector(`button[label="${currentLabel}"]`)
                                                 if (newLabelBtn)
                                                 {
                                                     newLabelBtn.click()
-                                                    if (currentTool)
-                                                    {
-                                                        const newToolBtn = newToolbar.querySelector(`button[data-tool-id="${currentTool}"]`)
-                                                        if (newToolBtn) newToolBtn.click()
-                                                    }
                                                 }
+                                            }
+                                            if (currentTool)
+                                            {
+                                                const newToolBtn = newToolbar.querySelector(`button[data-tool-id="${currentTool}"]`)
+                                                if (newToolBtn) newToolBtn.click()
                                             }
                                         }
 
@@ -775,7 +781,8 @@ export function updateProjects(responseJson, clear)
                                             project, image, imageBlock, fullImage, fullImageContainer,
                                             imageCardDiv, buttons, zoomInButton, zoomOutButton, saveButton,
                                             prevImageBtn, nextImageBtn,
-                                            closeButtonEl, blockButtons, imagesDiv
+                                            closeButtonEl, blockButtons, imagesDiv,
+                                            onToolChange: (tool) => { lastActiveTool = tool }
                                         })
                                     }
                                     else

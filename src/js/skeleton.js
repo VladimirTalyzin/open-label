@@ -964,6 +964,52 @@ export function createSkeletonAnnotator(canvas, template, labels, onBeforeChange
     const HANDLE_HIT = 10
     const DEFAULT_PAD = {left: PAD, top: PAD, right: PAD, bottom: PAD}
 
+    function clampSkeleton(skel)
+    {
+        const cw = canvas.width, ch = canvas.height
+        const pb = getSkeletonBBox(skel.points)
+        if (!pb) return
+        const pad = skel.bboxPad || {left: PAD, top: PAD, right: PAD, bottom: PAD}
+
+        // Clamp padding so bbox doesn't exceed canvas even when points are inside
+        pad.left = Math.min(pad.left, pb.minX)
+        pad.top = Math.min(pad.top, pb.minY)
+        pad.right = Math.min(pad.right, cw - pb.maxX)
+        pad.bottom = Math.min(pad.bottom, ch - pb.maxY)
+
+        // Enforce minimum padding
+        pad.left = Math.max(BBOX_MIN_PAD, pad.left)
+        pad.top = Math.max(BBOX_MIN_PAD, pad.top)
+        pad.right = Math.max(BBOX_MIN_PAD, pad.right)
+        pad.bottom = Math.max(BBOX_MIN_PAD, pad.bottom)
+        skel.bboxPad = pad
+
+        // Recalculate bbox and shift points if bbox is still out of bounds
+        const bbox = getAnnotBBox(skel)
+        if (!bbox) return
+        let dx = 0, dy = 0
+        if (bbox.x < 0) dx = -bbox.x
+        else if (bbox.x + bbox.w > cw) dx = cw - (bbox.x + bbox.w)
+        if (bbox.y < 0) dy = -bbox.y
+        else if (bbox.y + bbox.h > ch) dy = ch - (bbox.y + bbox.h)
+        if (dx !== 0 || dy !== 0)
+        {
+            for (const p of skel.points)
+            {
+                p.x += dx
+                p.y += dy
+            }
+        }
+    }
+
+    function clampAllSkeletons()
+    {
+        for (const skel of annotations)
+        {
+            clampSkeleton(skel)
+        }
+    }
+
     function setAnnotations(data)
     {
         const tplPoints = template && template.points ? template.points : []
@@ -976,6 +1022,7 @@ export function createSkeletonAnnotator(canvas, template, labels, onBeforeChange
                 bboxPad: a.bboxPad || {...DEFAULT_PAD}
             }
         })
+        clampAllSkeletons()
         selectedIdx = -1
         render()
     }
@@ -1021,11 +1068,13 @@ export function createSkeletonAnnotator(canvas, template, labels, onBeforeChange
             visible: 2
         }))
 
-        annotations.push({
+        const newSkel = {
             label: label || currentLabel || "object",
             points: pts,
             bboxPad: {...DEFAULT_PAD}
-        })
+        }
+        clampSkeleton(newSkel)
+        annotations.push(newSkel)
         selectedIdx = annotations.length - 1
         render()
         onChanged()
@@ -1467,6 +1516,7 @@ export function createSkeletonAnnotator(canvas, template, labels, onBeforeChange
             }
         }
 
+        clampSkeleton(skel)
         render()
     })
 

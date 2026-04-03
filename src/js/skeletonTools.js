@@ -11,7 +11,8 @@ export function setupSkeletonMode(
         project, image, imageBlock, fullImage, fullImageContainer,
         imageCardDiv, buttons, zoomInButton, zoomOutButton, saveButton,
         prevImageBtn, nextImageBtn,
-        closeButtonEl, blockButtons, imagesDiv
+        closeButtonEl, blockButtons, imagesDiv,
+        onToolChange = () => {}
     }
 )
 {
@@ -136,11 +137,13 @@ export function setupSkeletonMode(
     brushBtn.classList.add("btn", "btn-sm", "btn-secondary", "me-1")
     brushBtn.textContent = "\uD83D\uDD8C\uFE0F"
     brushBtn.title = "Brush (mask area to exclude)"
+    brushBtn.setAttribute("data-tool-id", "brush")
 
     const eraserBtn = document.createElement("button")
     eraserBtn.classList.add("btn", "btn-sm", "btn-secondary", "me-1")
     eraserBtn.textContent = "\uD83E\uDDFD"
     eraserBtn.title = "Eraser (remove mask)"
+    eraserBtn.setAttribute("data-tool-id", "eraser")
 
     const brushSizeSelect = document.createElement("select")
     brushSizeSelect.classList.add("form-select", "form-select-sm", "me-2")
@@ -162,6 +165,7 @@ export function setupSkeletonMode(
     editPointsBtn.classList.add("btn", "btn-sm", "btn-primary", "me-1")
     editPointsBtn.textContent = "\u2726"
     editPointsBtn.title = "Edit skeleton points"
+    editPointsBtn.setAttribute("data-tool-id", "skeleton")
 
     const sep = document.createElement("span")
     sep.style.width = "8px"
@@ -243,6 +247,7 @@ export function setupSkeletonMode(
     function setActiveTool(tool)
     {
         activeTool = tool
+        onToolChange(tool)
         editPointsBtn.classList.toggle("btn-secondary", tool !== "skeleton")
         editPointsBtn.classList.toggle("btn-primary", tool === "skeleton")
         brushBtn.classList.toggle("btn-secondary", tool !== "brush")
@@ -590,6 +595,9 @@ export function setupSkeletonMode(
                 saveAll()
             }
         }, 15000)
+
+        // Apply current tool state to canvases (tool may have been selected before image loaded)
+        setActiveTool(activeTool)
 
         cleanupFn = () =>
         {

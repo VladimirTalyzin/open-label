@@ -139,4 +139,4 @@ open-label/
 
 ## License
 
-All rights reserved.
+MIT

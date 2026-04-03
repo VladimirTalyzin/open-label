@@ -300,9 +300,15 @@ def load_project_data(project_path):
 
     if "images" in project_data:
         project_data["images_count"] = len(project_data["images"])
+        skeletons_dir = join_path(project_path, "skeletons")
+        project_data["annotated_count"] = sum(
+            1 for img in project_data["images"]
+            if img.get("masks") or path.exists(join_path(skeletons_dir, f"{img['image']}.json"))
+        )
         del project_data["images"]
     else:
         project_data["images_count"] = 0
+        project_data["annotated_count"] = 0
 
     return project_data
 

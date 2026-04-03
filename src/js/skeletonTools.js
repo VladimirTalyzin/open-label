@@ -153,7 +153,10 @@ export function setupSkeletonMode(
         opt.textContent = `${size}px`
         brushSizeSelect.appendChild(opt)
     }
-    brushSizeSelect.value = "15"
+    brushSizeSelect.value = localStorage.getItem("skeletonBrushSize") || "15"
+    brushSizeSelect.addEventListener("change", () => {
+        localStorage.setItem("skeletonBrushSize", brushSizeSelect.value)
+    })
 
     const editPointsBtn = document.createElement("button")
     editPointsBtn.classList.add("btn", "btn-sm", "btn-primary", "me-1")

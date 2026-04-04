@@ -22,7 +22,7 @@ from json import dump, load, loads
 from PIL import Image, ImageDraw
 from uuid import uuid4
 from fastapi.middleware.cors import CORSMiddleware
-from settings import PREVIEW_WIDTH, API_PORT
+from settings import PREVIEW_WIDTH, PREVIEW_BLOCK_SIZE, API_PORT
 
 from utility import transliterate, safe_move
 from database import (
@@ -490,17 +490,23 @@ async def upload_image(id_project: int, image: UploadFile = File(...)):
 
         if "images" not in settings_data:
             settings_data["images"] = []
-            accumulated_height = 0
 
-        else:
-            accumulated_height = sum(image["preview_height"] for image in settings_data["images"])
+        existing_count = len(settings_data["images"])
+        block_index = existing_count // PREVIEW_BLOCK_SIZE
+
+        # Calculate block_offset from images in the same block
+        block_start = block_index * PREVIEW_BLOCK_SIZE
+        block_offset = sum(
+            img["preview_height"] for img in settings_data["images"][block_start:]
+        )
 
         image_data = \
             {
                 "image": image_name,
                 "time": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
                 "preview_height": preview_height,
-                "accumulated_height": accumulated_height
+                "preview_block": block_index,
+                "block_offset": block_offset
             }
 
         settings_data["images"].append(image_data)
@@ -508,7 +514,10 @@ async def upload_image(id_project: int, image: UploadFile = File(...)):
         with open(settings_file, "w") as file_settings:
             dump(settings_data, file_settings)
 
-        return JSONResponse(content={"result": "ok", "message": "Image uploaded successfully", "image_data": image_data})
+        update_all_previews(preview_path, preview_height, project_path, block_index)
+
+        return JSONResponse(content={"result": "ok", "message": "Image uploaded successfully", "image_data": image_data,
+                                     "preview_base": f"/get_preview/{id_project}"})
 
     except Exception as exception:
         if path.exists(image_path):
@@ -863,11 +872,7 @@ async def update_project(id_project: int):
 
     images.sort(key=lambda item: item["time"])
 
-    all_previews_path = join_path(project_path, "all_previews.png")
-    if path.exists(all_previews_path):
-        remove(all_previews_path)
-
-    new_height = 0
+    # Load all preview images
     preview_images = []
     preview_heights = []
     for image_data in images:
@@ -879,21 +884,42 @@ async def update_project(id_project: int):
             draw.text((10, 40), "Missing image", fill="black")
 
         preview_images.append(preview_image)
-        preview_width, preview_height = preview_image.size
-        new_height += preview_height
+        _, preview_height = preview_image.size
         preview_heights.append(preview_height)
 
-    if new_height == 0:
-        if path.exists(all_previews_path):
-            remove(all_previews_path)
-    else:
-        new_image = Image.new("RGB", (PREVIEW_WIDTH, new_height))
-        y_offset = 0
-        for index_image, image_data in enumerate(images):
-            new_image.paste(preview_images[index_image], (0, y_offset))
-            y_offset += preview_heights[index_image]
+    # Set block info on each image
+    block_offset = 0
+    current_block = 0
+    for idx, image_data in enumerate(images):
+        block_index = idx // PREVIEW_BLOCK_SIZE
+        if block_index != current_block:
+            block_offset = 0
+            current_block = block_index
+        image_data["preview_block"] = block_index
+        image_data["block_offset"] = block_offset
+        block_offset += preview_heights[idx]
 
-        new_image.save(all_previews_path)
+    # Build block PNGs in all-preview/
+    all_preview_dir = join_path(project_path, "all-preview")
+    if path.exists(all_preview_dir):
+        shutil.rmtree(all_preview_dir)
+    makedirs(all_preview_dir, exist_ok=True)
+
+    for block_start in range(0, len(preview_images), PREVIEW_BLOCK_SIZE):
+        block_end = min(block_start + PREVIEW_BLOCK_SIZE, len(preview_images))
+        block_imgs = preview_images[block_start:block_end]
+        block_hts = preview_heights[block_start:block_end]
+
+        block_height = sum(block_hts)
+        if block_height > 0:
+            new_image = Image.new("RGB", (PREVIEW_WIDTH, block_height))
+            y_off = 0
+            for i, img in enumerate(block_imgs):
+                new_image.paste(img, (0, y_off))
+                y_off += block_hts[i]
+
+            bi = block_start // PREVIEW_BLOCK_SIZE
+            new_image.save(join_path(all_preview_dir, f"{bi}.png"))
 
     try:
         with open(settings_file, "r") as file_settings:
@@ -938,7 +964,8 @@ async def get_images_list(id_project: int):
             for img in images:
                 skel_file = join_path(skeletons_dir, f"{img['image']}.json")
                 img["has_skeleton"] = path.exists(skel_file)
-            return JSONResponse(content={"images": images, "preview_file": f"/get_preview/{id_project}.png"})
+                img["has_masks"] = bool(img.get("masks"))
+            return JSONResponse(content={"images": images, "preview_base": f"/get_preview/{id_project}"})
 
     else:
         raise HTTPException(status_code=404, detail="Project settings not found")
@@ -955,11 +982,13 @@ def create_preview(image_name: str, image_path: str, preview_path: str) -> tuple
     return preview_path, preview_height
 
 
-def update_all_previews(image_path: str, preview_height: int, project_path: str):
-    all_previews_path = join_path(project_path, "all_previews.png")
+def update_all_previews(image_path: str, preview_height: int, project_path: str, block_index: int):
+    all_preview_dir = join_path(project_path, "all-preview")
+    makedirs(all_preview_dir, exist_ok=True)
+    block_path = join_path(all_preview_dir, f"{block_index}.png")
 
-    if path.exists(all_previews_path):
-        all_previews = Image.open(all_previews_path)
+    if path.exists(block_path):
+        all_previews = Image.open(block_path)
         preview_image = Image.open(image_path)
 
         width, height = all_previews.size
@@ -969,24 +998,24 @@ def update_all_previews(image_path: str, preview_height: int, project_path: str)
         new_image.paste(all_previews, (0, 0))
         new_image.paste(preview_image, (0, height))
 
-        new_image.save(all_previews_path)
+        new_image.save(block_path)
     else:
         preview_image = Image.open(image_path)
-        preview_image.save(all_previews_path)
+        preview_image.save(block_path)
 
 
-@app.get("/get_preview/{id_project}.png", tags=["Project"])
-async def get_preview(id_project: int):
+@app.get("/get_preview/{id_project}/{block}.png", tags=["Project"])
+async def get_preview(id_project: int, block: int):
     script_path = get_script_directory()
     project_path = join_path(script_path, "projects", str(id_project))
-    all_previews_path = join_path(project_path, "all_previews.png")
+    block_path = join_path(project_path, "all-preview", f"{block}.png")
 
-    if not path.exists(all_previews_path):
+    if not path.exists(block_path):
         await update_project(id_project)
 
-    if path.exists(all_previews_path):
+    if path.exists(block_path):
         def parts_file():
-            with open(all_previews_path, mode="rb") as file_like:
+            with open(block_path, mode="rb") as file_like:
                 yield from file_like
 
         # noinspection PyTypeChecker
@@ -1003,15 +1032,16 @@ async def rebuild_all_previews(id_project: int):
         settings_data = load(file_settings)
 
     images = settings_data.get("images", [])
-    all_previews_path = join_path(project_path, "all_previews.png")
+    all_preview_dir = join_path(project_path, "all-preview")
 
-    if path.exists(all_previews_path):
-        remove(all_previews_path)
+    if path.exists(all_preview_dir):
+        shutil.rmtree(all_preview_dir)
+    makedirs(all_preview_dir, exist_ok=True)
 
     if not images:
         return JSONResponse(content={"result": "ok"})
 
-    new_height = 0
+    # Load all preview images
     preview_images = []
     preview_heights = []
     for image_data in images:
@@ -1024,16 +1054,24 @@ async def rebuild_all_previews(id_project: int):
 
         preview_images.append(preview_image)
         _, preview_height = preview_image.size
-        new_height += preview_height
         preview_heights.append(preview_height)
 
-    new_image = Image.new("RGB", (PREVIEW_WIDTH, new_height))
-    y_offset = 0
-    for idx, img in enumerate(preview_images):
-        new_image.paste(img, (0, y_offset))
-        y_offset += preview_heights[idx]
+    # Build blocks of PREVIEW_BLOCK_SIZE
+    for block_start in range(0, len(preview_images), PREVIEW_BLOCK_SIZE):
+        block_end = min(block_start + PREVIEW_BLOCK_SIZE, len(preview_images))
+        block_imgs = preview_images[block_start:block_end]
+        block_hts = preview_heights[block_start:block_end]
 
-    new_image.save(all_previews_path)
+        block_height = sum(block_hts)
+        new_image = Image.new("RGB", (PREVIEW_WIDTH, block_height))
+        y_offset = 0
+        for idx, img in enumerate(block_imgs):
+            new_image.paste(img, (0, y_offset))
+            y_offset += block_hts[idx]
+
+        block_index = block_start // PREVIEW_BLOCK_SIZE
+        new_image.save(join_path(all_preview_dir, f"{block_index}.png"))
+
     return JSONResponse(content={"result": "ok"})
 
 
@@ -1048,39 +1086,57 @@ async def regenerate_previews(id_project: int):
         import json as json_module
 
         images = []
-        accumulated_height = 0
+        block_offset = 0
+        current_block = 0
 
         for idx, image_name in enumerate(sorted(image_files)):
             image_path = join_path(images_path, image_name)
 
             preview_file_path, preview_height = create_preview(image_name, image_path, preview_path)
 
+            block_index = idx // PREVIEW_BLOCK_SIZE
+            if block_index != current_block:
+                block_offset = 0
+                current_block = block_index
+
             image_data = {
                 "image": image_name,
                 "time": datetime.fromtimestamp(path.getmtime(image_path)).strftime("%Y-%m-%d %H:%M:%S"),
                 "preview_height": preview_height,
-                "accumulated_height": accumulated_height
+                "preview_block": block_index,
+                "block_offset": block_offset
             }
-            accumulated_height += preview_height
+            block_offset += preview_height
             images.append(image_data)
 
             progress = json_module.dumps({"current": idx + 1, "total": total, "image": image_name})
             yield f"data: {progress}\n\n"
 
-        # Build all_previews.png
-        all_previews_path = join_path(project_path, "all_previews.png")
-        if path.exists(all_previews_path):
-            remove(all_previews_path)
+        # Build block PNGs in all-preview/
+        all_preview_dir = join_path(project_path, "all-preview")
+        if path.exists(all_preview_dir):
+            shutil.rmtree(all_preview_dir)
+        makedirs(all_preview_dir, exist_ok=True)
 
         if images:
-            new_height = sum(img["preview_height"] for img in images)
-            new_image = Image.new("RGB", (PREVIEW_WIDTH, new_height))
-            y_offset = 0
-            for image_data in images:
-                preview_img = Image.open(join_path(preview_path, image_data["image"]))
-                new_image.paste(preview_img, (0, y_offset))
-                y_offset += image_data["preview_height"]
-            new_image.save(all_previews_path)
+            for block_start in range(0, len(images), PREVIEW_BLOCK_SIZE):
+                block_end = min(block_start + PREVIEW_BLOCK_SIZE, len(images))
+                block_imgs = []
+                block_heights = []
+                for img_data in images[block_start:block_end]:
+                    preview_img = Image.open(join_path(preview_path, img_data["image"]))
+                    block_imgs.append(preview_img)
+                    block_heights.append(img_data["preview_height"])
+
+                block_height = sum(block_heights)
+                new_image = Image.new("RGB", (PREVIEW_WIDTH, block_height))
+                y_offset = 0
+                for i, img in enumerate(block_imgs):
+                    new_image.paste(img, (0, y_offset))
+                    y_offset += block_heights[i]
+
+                bi = block_start // PREVIEW_BLOCK_SIZE
+                new_image.save(join_path(all_preview_dir, f"{bi}.png"))
 
         # Update settings
         try:
@@ -1351,7 +1407,10 @@ async def get_skeleton_data(id_project: int, image_name: str):
     return JSONResponse(content={"skeletons": data})
 
 
-def generate_skeleton_svg(skeletons, connections, img_width, img_height):
+def generate_skeleton_svg(skeletons, connections, img_width, img_height, preview_width=None):
+    scale = max(img_width, img_height) / preview_width if preview_width else 1
+    stroke_w = max(2, round(2 * scale))
+    radius = max(4, round(4 * scale))
     lines = [f'<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 {img_width} {img_height}" preserveAspectRatio="xMidYMid meet">']
     for skel in skeletons:
         pts = skel.get("points", [])
@@ -1361,11 +1420,11 @@ def generate_skeleton_svg(skeletons, connections, img_width, img_height):
                 i1, i2 = conn[0], conn[1]
                 if i1 < len(pts) and i2 < len(pts):
                     p1, p2 = pts[i1], pts[i2]
-                    lines.append(f'<line x1="{p1["x"]:.1f}" y1="{p1["y"]:.1f}" x2="{p2["x"]:.1f}" y2="{p2["y"]:.1f}" stroke="{color}" stroke-width="2" opacity="0.7"/>')
+                    lines.append(f'<line x1="{p1["x"]:.1f}" y1="{p1["y"]:.1f}" x2="{p2["x"]:.1f}" y2="{p2["y"]:.1f}" stroke="{color}" stroke-width="{stroke_w}" opacity="0.7"/>')
         for p in pts:
             v = p.get("visible", 2)
             opacity = "0.7" if v >= 2 else "0.3"
-            lines.append(f'<circle cx="{p["x"]:.1f}" cy="{p["y"]:.1f}" r="4" fill="{color}" opacity="{opacity}"/>')
+            lines.append(f'<circle cx="{p["x"]:.1f}" cy="{p["y"]:.1f}" r="{radius}" fill="{color}" opacity="{opacity}"/>')
     lines.append('</svg>')
     return "\n".join(lines)
 
@@ -1409,7 +1468,7 @@ async def upload_skeleton_data(id_project: int, image_name: str, json_data: str 
                     except Exception:
                         pass
 
-        svg_content = generate_skeleton_svg(data, connections, img_w, img_h)
+        svg_content = generate_skeleton_svg(data, connections, img_w, img_h, PREVIEW_WIDTH)
         svg_file = join_path(skeleton_dir, f"{image_name}.svg")
         with open(svg_file, "w", encoding="utf-8") as f:
             f.write(svg_content)
@@ -1434,6 +1493,54 @@ async def get_skeleton_svg(id_project: int, image_name: str):
         raise HTTPException(status_code=404, detail="SVG not found")
 
     return FileResponse(svg_file, media_type="image/svg+xml")
+
+
+@app.post("/regenerate_skeleton_svgs/{id_project}", tags=["Skeleton"])
+async def regenerate_skeleton_svgs(id_project: int):
+    script_path = get_script_directory()
+    project_path = join_path(script_path, "projects", str(id_project))
+
+    if not path.exists(project_path):
+        raise HTTPException(status_code=404, detail="Project not found")
+
+    skeleton_dir = join_path(project_path, "skeletons")
+    if not path.exists(skeleton_dir):
+        return JSONResponse(content={"result": "ok", "regenerated": 0})
+
+    connections = []
+    settings_file = join_path(project_path, "project_settings.json")
+    if path.exists(settings_file):
+        with open(settings_file, "r") as sf:
+            settings = load(sf)
+            tpl = settings.get("skeleton_template", {})
+            connections = tpl.get("connections", [])
+
+    images_dir = join_path(project_path, "images")
+    count = 0
+    for fname in listdir(skeleton_dir):
+        if not fname.endswith(".json"):
+            continue
+        image_name = fname[:-5]  # remove .json
+        json_file = join_path(skeleton_dir, fname)
+        with open(json_file, "r", encoding="utf-8") as f:
+            data = load(f)
+
+        img_w, img_h = 1000, 1000
+        img_path = join_path(images_dir, image_name)
+        if path.exists(img_path):
+            try:
+                with Image.open(img_path) as img:
+                    img_w, img_h = img.size
+            except Exception:
+                pass
+
+        svg_content = generate_skeleton_svg(data, connections, img_w, img_h, PREVIEW_WIDTH)
+        svg_file = join_path(skeleton_dir, f"{image_name}.svg")
+        with open(svg_file, "w", encoding="utf-8") as f:
+            f.write(svg_content)
+        count += 1
+
+    return JSONResponse(content={"result": "ok", "regenerated": count})
 
 
 @app.get("/get_skeleton_mask/{id_project}/{image_name}", tags=["Skeleton"])

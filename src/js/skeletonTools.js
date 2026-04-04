@@ -12,6 +12,7 @@ export function setupSkeletonMode(
         imageCardDiv, buttons, zoomInButton, zoomOutButton, saveButton,
         prevImageBtn, nextImageBtn,
         closeButtonEl, blockButtons, imagesDiv,
+        annotatedCountSpan = null,
         onToolChange = () => {}
     }
 )
@@ -512,7 +513,13 @@ export function setupSkeletonMode(
                     if (resp.result === "ok")
                     {
                         skelUnsaved = false
+                        const hadSkeleton = image.has_skeleton
                         image.has_skeleton = data.length > 0
+                        if (annotatedCountSpan && image.has_skeleton !== hadSkeleton)
+                        {
+                            const count = parseInt(annotatedCountSpan.textContent) || 0
+                            annotatedCountSpan.textContent = image.has_skeleton ? count + 1 : Math.max(count - 1, 0)
+                        }
                     }
                 })
         }

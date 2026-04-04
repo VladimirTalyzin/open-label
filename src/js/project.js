@@ -63,21 +63,16 @@ export function updateProjects(responseJson, clear)
 
         setValueListener(projectNameInput, "set_project_name", "project_name", {id_project: project.id_project})
 
-        const imagesCount = document.createElement("p")
-        imagesCount.textContent = "Images count: "
+        const statsLine = document.createElement("p")
+        statsLine.style.cssText = "margin:0.25rem 0;"
 
         const imagesCountSpan = document.createElement("span")
         imagesCountSpan.textContent = project.images_count
 
-        imagesCount.appendChild(imagesCountSpan)
-
-        const annotatedCount = document.createElement("p")
-        annotatedCount.textContent = "Annotated: "
-
         const annotatedCountSpan = document.createElement("span")
         annotatedCountSpan.textContent = project.annotated_count
 
-        annotatedCount.appendChild(annotatedCountSpan)
+        statsLine.append("Images: ", imagesCountSpan, " \u00A0|\u00A0 Annotated: ", annotatedCountSpan)
 
         const projectButtons = document.createElement("ul")
         projectButtons.classList.add("nav", "project-tabs", "mt-3")
@@ -347,8 +342,7 @@ export function updateProjects(responseJson, clear)
 
         projectCardBody.appendChild(projectUuid)
         projectCardBody.appendChild(projectNameInput)
-        projectCardBody.appendChild(imagesCount)
-        projectCardBody.appendChild(annotatedCount)
+        projectCardBody.appendChild(statsLine)
         const isYoloSkeleton = (project.project_type || "segmentation") === "yolo-skeleton"
         labelsLi.style.display = isYoloSkeleton ? "none" : ""
 
@@ -412,43 +406,7 @@ export function updateProjects(responseJson, clear)
             }
         }
 
-        // Overlay toggle state for skeleton SVG on tiles
-        let showSkeletonOverlay = false
-        const svgOverlays = []
-
-        function updateAllSvgOverlays()
-        {
-            for (const ov of svgOverlays)
-            {
-                ov.style.display = showSkeletonOverlay ? "block" : "none"
-            }
-        }
-
-        // Add overlay checkbox next to Images tab text
-        const overlayCheckLabel = document.createElement("label")
-        overlayCheckLabel.classList.add("form-check", "form-check-inline", "mb-0", "ms-2")
-        overlayCheckLabel.style.fontSize = "11px"
-        overlayCheckLabel.style.verticalAlign = "middle"
-        const overlayCheck = document.createElement("input")
-        overlayCheck.type = "checkbox"
-        overlayCheck.classList.add("form-check-input")
-        overlayCheck.style.marginTop = "0"
-        overlayCheck.checked = false
-        overlayCheck.addEventListener("change", () =>
-        {
-            showSkeletonOverlay = overlayCheck.checked
-            updateAllSvgOverlays()
-        })
-        const overlayCheckText = document.createElement("span")
-        overlayCheckText.classList.add("form-check-label")
-        overlayCheckText.textContent = "Overlay"
-        overlayCheckText.style.fontSize = "11px"
-        overlayCheckLabel.appendChild(overlayCheck)
-        overlayCheckLabel.appendChild(overlayCheckText)
-        if (isYoloSkeleton)
-        {
-            imagesLi.appendChild(overlayCheckLabel)
-        }
+        // SVG overlays are shown on card hover (no global toggle needed)
 
         addEventListenerWithId(imagesButton, "click", "show_images", (e) => {
             e.preventDefault()
@@ -467,12 +425,18 @@ export function updateProjects(responseJson, clear)
                             imagesListDiv.style.flexWrap = "wrap"
                             imagesListDiv.style.gap = "0.5rem"
 
-                            const previewFile = respJson.hasOwnProperty("preview_file") ? respJson.preview_file : null
+                            const previewBase = respJson.hasOwnProperty("preview_base") ? respJson.preview_base : null
 
-                            const prepareImage = (imageObject, imageData, pf) =>
+                            let previewCacheKey = ""
+                            const prepareImage = (imageObject, imageData, previewBaseUrl) =>
                             {
+                                const block = imageData.preview_block != null ? imageData.preview_block : 0
+                                const cacheSuffix = previewCacheKey ? `?t=${previewCacheKey}` : ""
+                                const pf = `${previewBaseUrl}/${block}.png${cacheSuffix}`
                                 imageObject.style.backgroundImage = `url(${pf})`
-                                imageObject.style.backgroundPosition = `0px -${imageData.accumulated_height}px`
+                                const offset = imageData.block_offset != null ? imageData.block_offset : (imageData.accumulated_height || 0)
+                                imageObject.style.backgroundPosition = `0px -${offset}px`
+                                imageObject.style.backgroundSize = `${imagesWidth} auto`
                                 imageObject.style.backgroundRepeat = "no-repeat"
                                 imageObject.style.height = `${imageData.preview_height}px`
                                 imageObject.style.width = imagesWidth
@@ -485,10 +449,10 @@ export function updateProjects(responseJson, clear)
                             let lastActiveTool = null
                             let lastActiveLabel = null
 
-                            const addImage = (imageVariable, previewFileVariable) =>
+                            const addImage = (imageVariable, previewBaseVariable) =>
                             {
                                 const image = imageVariable
-                                const pf = previewFileVariable
+                                const pf = previewBaseVariable
                                 const imageCardDiv = document.createElement("div")
                                 imageCardDiv.classList.add("image-tile-card")
                                 imageCardDiv.style.width = `calc(${imagesWidth} + 6.5pt)`
@@ -500,7 +464,7 @@ export function updateProjects(responseJson, clear)
                                 prepareImage(imageBlock, image, pf)
                                 imageBlock.classList.add("card-img-top")
 
-                                // Annotation chip
+                                // Annotation chip and hover overlay
                                 if (image.has_skeleton)
                                 {
                                     const chip = document.createElement("span")
@@ -508,13 +472,14 @@ export function updateProjects(responseJson, clear)
                                     chip.style.cssText = "position:absolute;top:4px;right:4px;background:#28a745;color:#fff;font-size:10px;font-weight:bold;padding:1px 6px;border-radius:10px;z-index:2;pointer-events:none;"
                                     imageBlock.appendChild(chip)
 
-                                    // SVG overlay
+                                    // SVG overlay (hidden by default, shown on hover)
                                     const svgOverlay = document.createElement("img")
                                     svgOverlay.src = `/get_skeleton_svg/${project.id_project}/${encodeURIComponent(image.image)}`
-                                    svgOverlay.style.cssText = "position:absolute;top:2.5pt;left:2.5pt;width:100%;height:100%;pointer-events:none;z-index:1;object-fit:fill;"
-                                    svgOverlay.style.display = showSkeletonOverlay ? "block" : "none"
+                                    svgOverlay.style.cssText = "position:absolute;top:0;left:0;width:100%;height:100%;pointer-events:none;z-index:1;object-fit:fill;display:none;"
                                     imageBlock.appendChild(svgOverlay)
-                                    svgOverlays.push(svgOverlay)
+
+                                    imageCardDiv.addEventListener("mouseenter", () => { svgOverlay.style.display = "block" })
+                                    imageCardDiv.addEventListener("mouseleave", () => { svgOverlay.style.display = "none" })
                                 }
 
                                 const imageCardBody = document.createElement("div")
@@ -546,6 +511,10 @@ export function updateProjects(responseJson, clear)
                                                 {
                                                     imageCardDiv.remove()
                                                     imagesCountSpan.innerHTML = Math.max(parseInt(imagesCountSpan.innerHTML) - 1, 0).toString()
+                                                    if (image.has_skeleton || image.has_masks)
+                                                    {
+                                                        annotatedCountSpan.innerHTML = Math.max(parseInt(annotatedCountSpan.innerHTML) - 1, 0).toString()
+                                                    }
                                                 }
                                                 else
                                                 {
@@ -688,10 +657,11 @@ export function updateProjects(responseJson, clear)
 
                                             const svgOverlay = document.createElement("img")
                                             svgOverlay.src = `/get_skeleton_svg/${project.id_project}/${encodeURIComponent(image.image)}?t=${Date.now()}`
-                                            svgOverlay.style.cssText = "position:absolute;top:2.5pt;left:2.5pt;width:100%;height:100%;pointer-events:none;z-index:1;object-fit:fill;"
-                                            svgOverlay.style.display = showSkeletonOverlay ? "block" : "none"
+                                            svgOverlay.style.cssText = "position:absolute;top:2.5pt;left:2.5pt;width:100%;height:100%;pointer-events:none;z-index:1;object-fit:fill;display:none;"
                                             imageBlock.appendChild(svgOverlay)
-                                            svgOverlays.push(svgOverlay)
+
+                                            imageCardDiv.addEventListener("mouseenter", () => { svgOverlay.style.display = "block" })
+                                            imageCardDiv.addEventListener("mouseleave", () => { svgOverlay.style.display = "none" })
                                         }
                                     })
 
@@ -791,6 +761,7 @@ export function updateProjects(responseJson, clear)
                                             imageCardDiv, buttons, zoomInButton, zoomOutButton, saveButton,
                                             prevImageBtn, nextImageBtn,
                                             closeButtonEl, blockButtons, imagesDiv,
+                                            annotatedCountSpan,
                                             onToolChange: (tool) => { lastActiveTool = tool }
                                         })
                                     }
@@ -818,6 +789,12 @@ export function updateProjects(responseJson, clear)
                                                         () =>
                                                         {
                                                             saveButton.disabled = true
+                                                            if (!image.has_masks)
+                                                            {
+                                                                image.has_masks = true
+                                                                const count = parseInt(annotatedCountSpan.textContent) || 0
+                                                                annotatedCountSpan.textContent = count + 1
+                                                            }
                                                         },
                                                         (error) =>
                                                         {
@@ -1604,7 +1581,7 @@ export function updateProjects(responseJson, clear)
 
                             for (const img of respJson.images)
                             {
-                                addImage(img, previewFile)
+                                addImage(img, previewBase)
                             }
                             imagesDiv.style.display = "block"
 
@@ -1683,7 +1660,8 @@ export function updateProjects(responseJson, clear)
 
                                             if (answer.hasOwnProperty('result') && answer['result'] === 'ok')
                                             {
-                                                addImage(answer['image_data'], `${respJson.preview_file}?t=${new Date().getTime()}`)
+                                                previewCacheKey = new Date().getTime()
+                                                addImage(answer['image_data'], answer['preview_base'] || respJson.preview_base)
                                                 imagesCountSpan.innerHTML = (parseInt(imagesCountSpan.innerHTML) + 1).toString()
                                             }
                                             else
@@ -1714,7 +1692,7 @@ export function updateProjects(responseJson, clear)
 
                                     if (showProgress && progressBar)
                                     {
-                                        statusText.textContent = "Генерация all_previews.png..."
+                                        statusText.textContent = "Ген��рация превью блоков..."
                                         progressBar.style.width = "100%"
                                         progressBar.textContent = "100%"
                                     }

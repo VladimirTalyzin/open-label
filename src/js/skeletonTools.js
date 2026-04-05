@@ -137,13 +137,13 @@ export function setupSkeletonMode(
     const brushBtn = document.createElement("button")
     brushBtn.classList.add("btn", "btn-sm", "btn-secondary", "me-1")
     brushBtn.textContent = "\uD83D\uDD8C\uFE0F"
-    brushBtn.title = "Brush (mask area to exclude)"
+    brushBtn.title = "Pen (P)"
     brushBtn.setAttribute("data-tool-id", "brush")
 
     const eraserBtn = document.createElement("button")
     eraserBtn.classList.add("btn", "btn-sm", "btn-secondary", "me-1")
     eraserBtn.textContent = "\uD83E\uDDFD"
-    eraserBtn.title = "Eraser (remove mask)"
+    eraserBtn.title = "Eraser (E)"
     eraserBtn.setAttribute("data-tool-id", "eraser")
 
     const brushSizeSelect = document.createElement("select")
@@ -175,13 +175,15 @@ export function setupSkeletonMode(
     const undoBtn = document.createElement("button")
     undoBtn.classList.add("btn", "btn-sm", "btn-secondary", "me-1")
     undoBtn.textContent = "\u21B6"
-    undoBtn.title = "Undo"
+    undoBtn.title = "Undo (Ctrl+Z)"
+    undoBtn.setAttribute("data-action", "undo")
     undoBtn.disabled = true
 
     const redoBtn = document.createElement("button")
     redoBtn.classList.add("btn", "btn-sm", "btn-secondary", "me-2")
     redoBtn.textContent = "\u21B7"
-    redoBtn.title = "Redo"
+    redoBtn.title = "Redo (Ctrl+Shift+Z)"
+    redoBtn.setAttribute("data-action", "redo")
     redoBtn.disabled = true
 
     // --- Show names checkbox ---

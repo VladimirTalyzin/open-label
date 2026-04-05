@@ -72,7 +72,40 @@ export function updateProjects(responseJson, clear)
         const annotatedCountSpan = document.createElement("span")
         annotatedCountSpan.textContent = project.annotated_count
 
-        statsLine.append("Images: ", imagesCountSpan, " \u00A0|\u00A0 Annotated: ", annotatedCountSpan)
+        const groupCheckbox = document.createElement("input")
+        groupCheckbox.type = "checkbox"
+        groupCheckbox.id = `group-actions-${project.id_project}`
+        groupCheckbox.style.cssText = "margin-left:0.5rem;cursor:pointer;vertical-align:middle;"
+
+        const groupLabel = document.createElement("label")
+        groupLabel.htmlFor = groupCheckbox.id
+        groupLabel.textContent = "Group actions"
+        groupLabel.style.cssText = "cursor:pointer;margin-left:0.25rem;user-select:none;"
+
+        statsLine.append("Images: ", imagesCountSpan, " \u00A0|\u00A0 Annotated: ", annotatedCountSpan, " \u00A0|\u00A0 ", groupCheckbox, groupLabel)
+
+        let groupModeActive = false
+        let lastCheckedIndex = null
+
+        const bulkBar = document.createElement("div")
+        bulkBar.style.cssText = "display:none;padding:0.5rem;margin-bottom:0.5rem;background:#f8d7da;border:1px solid #f5c6cb;border-radius:6px;align-items:center;gap:0.5rem;"
+
+        const selectedCountSpan = document.createElement("span")
+        selectedCountSpan.textContent = "Selected: 0"
+
+        const selectAllBtn = document.createElement("button")
+        selectAllBtn.classList.add("btn", "btn-sm", "btn-outline-secondary")
+        selectAllBtn.textContent = "Select all"
+
+        const deselectAllBtn = document.createElement("button")
+        deselectAllBtn.classList.add("btn", "btn-sm", "btn-outline-secondary")
+        deselectAllBtn.textContent = "Deselect all"
+
+        const bulkDeleteBtn = document.createElement("button")
+        bulkDeleteBtn.classList.add("btn", "btn-sm", "btn-danger")
+        bulkDeleteBtn.textContent = "Delete selected"
+
+        bulkBar.append(selectedCountSpan, selectAllBtn, deselectAllBtn, bulkDeleteBtn)
 
         const projectButtons = document.createElement("ul")
         projectButtons.classList.add("nav", "project-tabs", "mt-3")
@@ -420,6 +453,8 @@ export function updateProjects(responseJson, clear)
                         {
                             imagesDiv.innerHTML = ""
 
+                            const imageCards = []
+
                             const imagesListDiv = document.createElement("div")
                             imagesListDiv.style.display = "flex"
                             imagesListDiv.style.flexWrap = "wrap"
@@ -449,6 +484,13 @@ export function updateProjects(responseJson, clear)
                             let lastActiveTool = null
                             let lastActiveLabel = null
 
+                            const updateSelectedCount = () =>
+                            {
+                                const count = imageCards.filter(c => c.checkbox.checked).length
+                                selectedCountSpan.textContent = `Selected: ${count}`
+                                bulkDeleteBtn.disabled = count === 0
+                            }
+
                             const addImage = (imageVariable, previewBaseVariable) =>
                             {
                                 const image = imageVariable
@@ -463,6 +505,30 @@ export function updateProjects(responseJson, clear)
                                 imageBlock.style.position = "relative"
                                 prepareImage(imageBlock, image, pf)
                                 imageBlock.classList.add("card-img-top")
+
+                                const cardCheckbox = document.createElement("input")
+                                cardCheckbox.type = "checkbox"
+                                cardCheckbox.style.cssText = "position:absolute;top:4px;left:4px;z-index:3;width:18px;height:18px;cursor:pointer;display:none;accent-color:#0d6efd;"
+                                cardCheckbox.addEventListener("click", (e) =>
+                                {
+                                    e.stopPropagation()
+                                    const currentIndex = imageCards.findIndex(c => c.card === imageCardDiv)
+                                    if (e.shiftKey && lastCheckedIndex !== null && lastCheckedIndex !== currentIndex)
+                                    {
+                                        const start = Math.min(lastCheckedIndex, currentIndex)
+                                        const end = Math.max(lastCheckedIndex, currentIndex)
+                                        const checked = cardCheckbox.checked
+                                        for (let i = start; i <= end; i++)
+                                        {
+                                            imageCards[i].checkbox.checked = checked
+                                            imageCards[i].card.style.outline = checked ? "3px solid #0d6efd" : ""
+                                        }
+                                    }
+                                    lastCheckedIndex = currentIndex
+                                    imageCardDiv.style.outline = cardCheckbox.checked ? "3px solid #0d6efd" : ""
+                                    updateSelectedCount()
+                                })
+                                imageBlock.appendChild(cardCheckbox)
 
                                 // Annotation chip and hover overlay
                                 if (image.has_skeleton)
@@ -510,6 +576,8 @@ export function updateProjects(responseJson, clear)
                                                 if (response.hasOwnProperty("result") && response.result === "ok")
                                                 {
                                                     imageCardDiv.remove()
+                                                    const idx = imageCards.findIndex(c => c.card === imageCardDiv)
+                                                    if (idx !== -1) imageCards.splice(idx, 1)
                                                     imagesCountSpan.innerHTML = Math.max(parseInt(imagesCountSpan.innerHTML) - 1, 0).toString()
                                                     if (image.has_skeleton || image.has_masks)
                                                     {
@@ -536,8 +604,32 @@ export function updateProjects(responseJson, clear)
                                 imageCardDiv.appendChild(imageCardBody)
                                 imagesListDiv.appendChild(imageCardDiv)
 
-                                addEventListenerWithId(imageBlock, "click", "show_full_image", () =>
+                                imageCards.push({card: imageCardDiv, checkbox: cardCheckbox, image: image})
+
+                                addEventListenerWithId(imageBlock, "click", "show_full_image", (e) =>
                                 {
+                                    if (groupModeActive)
+                                    {
+                                        if (e.target === cardCheckbox) return
+                                        cardCheckbox.checked = !cardCheckbox.checked
+                                        const currentIndex = imageCards.findIndex(c => c.card === imageCardDiv)
+                                        if (e.shiftKey && lastCheckedIndex !== null && lastCheckedIndex !== currentIndex)
+                                        {
+                                            const start = Math.min(lastCheckedIndex, currentIndex)
+                                            const end = Math.max(lastCheckedIndex, currentIndex)
+                                            const checked = cardCheckbox.checked
+                                            for (let i = start; i <= end; i++)
+                                            {
+                                                imageCards[i].checkbox.checked = checked
+                                                imageCards[i].card.style.outline = checked ? "3px solid #0d6efd" : ""
+                                            }
+                                        }
+                                        lastCheckedIndex = currentIndex
+                                        imageCardDiv.style.outline = cardCheckbox.checked ? "3px solid #0d6efd" : ""
+                                        updateSelectedCount()
+                                        return
+                                    }
+
                                     if (imageCardDiv.classList.contains("expanded"))
                                     {
                                         return
@@ -1713,6 +1805,96 @@ export function updateProjects(responseJson, clear)
                             {
                                 addImage(img, previewBase)
                             }
+
+                            // Apply initial group mode state if checkbox was toggled before images loaded
+                            if (groupCheckbox.checked)
+                            {
+                                groupModeActive = true
+                                bulkBar.style.display = "flex"
+                                for (const entry of imageCards)
+                                {
+                                    entry.checkbox.style.display = "block"
+                                }
+                            }
+
+                            groupCheckbox.addEventListener("change", () =>
+                            {
+                                groupModeActive = groupCheckbox.checked
+                                lastCheckedIndex = null
+                                bulkBar.style.display = groupModeActive ? "flex" : "none"
+                                for (const entry of imageCards)
+                                {
+                                    entry.checkbox.style.display = groupModeActive ? "block" : "none"
+                                    entry.checkbox.checked = false
+                                    entry.card.style.outline = ""
+                                }
+                                updateSelectedCount()
+                            })
+
+                            selectAllBtn.addEventListener("click", () =>
+                            {
+                                for (const entry of imageCards)
+                                {
+                                    entry.checkbox.checked = true
+                                    entry.card.style.outline = "3px solid #0d6efd"
+                                }
+                                updateSelectedCount()
+                            })
+
+                            deselectAllBtn.addEventListener("click", () =>
+                            {
+                                for (const entry of imageCards)
+                                {
+                                    entry.checkbox.checked = false
+                                    entry.card.style.outline = ""
+                                }
+                                lastCheckedIndex = null
+                                updateSelectedCount()
+                            })
+
+                            bulkDeleteBtn.addEventListener("click", () =>
+                            {
+                                const selected = imageCards.filter(c => c.checkbox.checked)
+                                if (selected.length === 0) return
+                                if (!confirm(`Are you sure you want to delete ${selected.length} image(s)?`)) return
+
+                                bulkDeleteBtn.disabled = true
+                                const names = selected.map(c => c.image.image)
+
+                                const formData = new FormData()
+                                formData.append("id_project", project.id_project)
+                                formData.append("image_names", JSON.stringify(names))
+
+                                fetch("/delete_images_bulk", {method: "POST", body: formData})
+                                    .then(r => r.json())
+                                    .then(resp =>
+                                    {
+                                        if (resp.result === "ok")
+                                        {
+                                            let annotatedRemoved = 0
+                                            for (const entry of selected)
+                                            {
+                                                if (entry.image.has_skeleton || entry.image.has_masks) annotatedRemoved++
+                                                entry.card.remove()
+                                            }
+                                            imageCards.splice(0, imageCards.length, ...imageCards.filter(c => !selected.includes(c)))
+                                            imagesCountSpan.innerHTML = Math.max(parseInt(imagesCountSpan.innerHTML) - selected.length, 0).toString()
+                                            if (annotatedRemoved > 0)
+                                            {
+                                                annotatedCountSpan.innerHTML = Math.max(parseInt(annotatedCountSpan.innerHTML) - annotatedRemoved, 0).toString()
+                                            }
+                                            lastCheckedIndex = null
+                                            updateSelectedCount()
+                                        }
+                                        else
+                                        {
+                                            console.warn(resp)
+                                        }
+                                    })
+                                    .catch(err => console.error("Bulk delete error:", err))
+                                    .finally(() => { bulkDeleteBtn.disabled = false })
+                            })
+
                             imagesDiv.style.display = "block"
 
                             const addImageButton = document.createElement("button")
@@ -1854,6 +2036,7 @@ export function updateProjects(responseJson, clear)
                                 input.click()
                             })
 
+                            imagesDiv.appendChild(bulkBar)
                             imagesDiv.appendChild(imagesListDiv)
                             imagesDiv.appendChild(addImageButton)
                         },

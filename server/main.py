@@ -2,7 +2,7 @@ import sys
 import traceback
 import zipfile
 import shutil
-from typing import Optional
+from typing import Optional, List
 
 if sys.platform == "win32":
     import colorama
@@ -827,6 +827,72 @@ async def delete_image(id_project: int = Form(...), image_name: str = Form(...))
     except Exception as exception:
         traceback.print_exc()
         raise HTTPException(status_code=500, detail=f"Error deleting image: {exception}")
+
+
+@app.post("/delete_images_bulk", tags=["Image"])
+async def delete_images_bulk(id_project: int = Form(...), image_names: str = Form(...)):
+    """Delete multiple images at once. image_names is a JSON array of image name strings."""
+    script_path = get_script_directory()
+    project_path = join_path(script_path, "projects", str(id_project))
+    images_path = join_path(project_path, "images")
+    preview_path = join_path(project_path, "preview")
+    masks_path = join_path(project_path, "masks")
+    deleted_path = join_path(project_path, "deleted")
+    settings_file = join_path(project_path, "project_settings.json")
+
+    if not path.exists(project_path):
+        raise HTTPException(status_code=404, detail="Project not found")
+
+    names = loads(image_names)
+    if not isinstance(names, list):
+        raise HTTPException(status_code=400, detail="image_names must be a JSON array")
+
+    if not path.exists(deleted_path):
+        makedirs(deleted_path)
+
+    for image_name in names:
+        image_file_path = join_path(images_path, image_name)
+        preview_file_path = join_path(preview_path, image_name)
+
+        if path.exists(image_file_path):
+            deleted_image_path = join_path(deleted_path, "images")
+            if not path.exists(deleted_image_path):
+                makedirs(deleted_image_path)
+            safe_move(image_file_path, deleted_image_path)
+
+        if path.exists(preview_file_path):
+            deleted_preview_path = join_path(deleted_path, "preview")
+            if not path.exists(deleted_preview_path):
+                makedirs(deleted_preview_path)
+            safe_move(preview_file_path, deleted_preview_path)
+
+        if path.exists(masks_path):
+            for mask_file in listdir(masks_path):
+                if mask_file.startswith(image_name):
+                    mask_file_path = join_path(masks_path, mask_file)
+                    deleted_mask_path = join_path(deleted_path, "masks")
+                    if not path.exists(deleted_mask_path):
+                        makedirs(deleted_mask_path)
+                    safe_move(mask_file_path, deleted_mask_path)
+
+    try:
+        with open(settings_file, "r") as file_settings:
+            settings_data = load(file_settings)
+
+        names_set = set(names)
+        if "images" in settings_data:
+            settings_data["images"] = [img for img in settings_data["images"] if img["image"] not in names_set]
+
+        with open(settings_file, "w") as file_settings:
+            dump(settings_data, file_settings)
+
+        await update_project(id_project)
+
+        return JSONResponse(content={"result": "ok", "deleted_count": len(names)})
+
+    except Exception as exception:
+        traceback.print_exc()
+        raise HTTPException(status_code=500, detail=f"Error deleting images: {exception}")
 
 
 @app.get("/update_project/{id_project}", tags=["Project"])

@@ -612,10 +612,12 @@ export function updateProjects(responseJson, clear)
                                     const zoomInButton = document.createElement("button")
                                     zoomInButton.classList.add("btn", "btn-sm", "btn-secondary", "me-1")
                                     zoomInButton.textContent = "\uD83D\uDD0D\uFE0F\u2795"
+                                    zoomInButton.title = "Zoom In (+)"
 
                                     const zoomOutButton = document.createElement("button")
                                     zoomOutButton.classList.add("btn", "btn-sm", "btn-secondary", "me-4")
                                     zoomOutButton.textContent = "\uD83D\uDD0D\uFE0F\u2796"
+                                    zoomOutButton.title = "Zoom Out (-)"
 
                                     const projectType = project.project_type || "segmentation"
                                     let skeletonCleanup = null
@@ -624,15 +626,17 @@ export function updateProjects(responseJson, clear)
                                     saveButton.classList.add("btn", "btn-sm", "btn-secondary", "ms-3")
                                     saveButton.textContent = "\uD83D\uDCBE"
                                     saveButton.disabled = true
-                                    saveButton.title = "Auto-save enabled"
+                                    saveButton.title = "Save (S)"
 
                                     // --- Close ---
                                     const closeButtonEl = document.createElement("button")
                                     closeButtonEl.classList.add("btn", "btn-sm")
                                     closeButtonEl.textContent = "\u2716"
+                                    closeButtonEl.title = "Close (Escape)"
                                     addEventListenerWithId(closeButtonEl, "click", "close_full_image", () =>
                                     {
                                         if (skeletonCleanup) skeletonCleanup()
+                                        removeEventListenerWithId(document, "toolbar_hotkeys")
                                         blockButtons(null)
 
                                         lastZoomLevel = fullImage.zoom_level
@@ -745,13 +749,13 @@ export function updateProjects(responseJson, clear)
                                     const prevImageBtn = document.createElement("button")
                                     prevImageBtn.classList.add("btn", "btn-sm", "btn-secondary", "ms-auto", "me-1")
                                     prevImageBtn.textContent = "\u2190"
-                                    prevImageBtn.title = "Previous image"
+                                    prevImageBtn.title = "Previous image (Ctrl+Left)"
                                     addEventListenerWithId(prevImageBtn, "click", "prev_image", () => navigateImage("prev"))
 
                                     const nextImageBtn = document.createElement("button")
                                     nextImageBtn.classList.add("btn", "btn-sm", "btn-secondary", "me-1")
                                     nextImageBtn.textContent = "\u2192"
-                                    nextImageBtn.title = "Next image"
+                                    nextImageBtn.title = "Next image (Ctrl+Right)"
                                     addEventListenerWithId(nextImageBtn, "click", "next_image", () => navigateImage("next"))
 
                                     if (projectType === "yolo-skeleton")
@@ -837,6 +841,7 @@ export function updateProjects(responseJson, clear)
                                         brushButton.classList.add("btn", "btn-sm", "btn-secondary", "me-1")
                                         brushButton.innerHTML = "\uD83D\uDD8C\uFE0F"
                                         brushButton.setAttribute("data-tool-id", "brush")
+                                        brushButton.title = "Pen (P)"
                                         addEventListenerWithId(brushButton, "click", "brush_mode", () =>
                                         {
                                             getActiveLabel(imageCardDiv, (activeLabel) =>
@@ -927,6 +932,7 @@ export function updateProjects(responseJson, clear)
                                         eraserButton.classList.add("btn", "btn-sm", "btn-secondary", "me-1")
                                         eraserButton.innerHTML = "\uD83E\uDDFD"
                                         eraserButton.setAttribute("data-tool-id", "eraser")
+                                        eraserButton.title = "Eraser (E)"
                                         addEventListenerWithId(eraserButton, "click", "eraser_mode", () =>
                                         {
                                             getActiveLabel(imageCardDiv, (activeLabel) =>
@@ -1015,7 +1021,7 @@ export function updateProjects(responseJson, clear)
                                         const antiLabelButton = document.createElement("button")
                                         antiLabelButton.classList.add("btn", "btn-sm", "btn-secondary", "me-4")
                                         antiLabelButton.innerHTML = "\uD83D\uDEAB"
-                                        antiLabelButton.title = "AntiLabel"
+                                        antiLabelButton.title = "AntiLabel (E)"
                                         antiLabelButton.setAttribute("data-tool-id", "anti-label")
                                         addEventListenerWithId(antiLabelButton, "click", "anti_label_mode", () =>
                                             getActiveLabel(imageCardDiv, (activeLabel) =>
@@ -1189,7 +1195,8 @@ export function updateProjects(responseJson, clear)
                                         const undoButton = document.createElement("button")
                                         undoButton.classList.add("btn", "btn-sm", "btn-secondary", "me-4")
                                         undoButton.innerHTML = "\u21B6"
-                                        undoButton.title = "Undo"
+                                        undoButton.title = "Undo (Ctrl+Z)"
+                                        undoButton.setAttribute("data-action", "undo")
                                         addEventListenerWithId(undoButton, "click", "undo_button", () =>
                                             getActiveLabel(imageCardDiv, (activeLabel) =>
                                             {
@@ -1576,6 +1583,129 @@ export function updateProjects(responseJson, clear)
 
                                     addEventListenerWithId(zoomInButton, "click", "zoom_in", () => zoom(30))
                                     addEventListenerWithId(zoomOutButton, "click", "zoom_out", () => zoom(-30))
+
+                                    // --- Keyboard shortcuts ---
+                                    addEventListenerWithId(document, "keydown", "toolbar_hotkeys", (event) =>
+                                    {
+                                        if (event.target.tagName === "INPUT" || event.target.tagName === "TEXTAREA" || event.target.tagName === "SELECT") return
+                                        if (!document.body.contains(toolbar)) return
+
+                                        const code = event.code
+                                        const key = event.key
+
+                                        // Ctrl+Z → Undo
+                                        if ((event.ctrlKey || event.metaKey) && !event.shiftKey && code === "KeyZ")
+                                        {
+                                            event.preventDefault()
+                                            const undoBtn = toolbar.querySelector('[data-action="undo"]')
+                                            if (undoBtn && !undoBtn.disabled) undoBtn.click()
+                                            return
+                                        }
+
+                                        // Ctrl+Shift+Z → Redo
+                                        if ((event.ctrlKey || event.metaKey) && event.shiftKey && code === "KeyZ")
+                                        {
+                                            event.preventDefault()
+                                            const redoBtn = toolbar.querySelector('[data-action="redo"]')
+                                            if (redoBtn && !redoBtn.disabled) redoBtn.click()
+                                            return
+                                        }
+
+                                        // Ctrl+Right → Next image
+                                        if ((event.ctrlKey || event.metaKey) && key === "ArrowRight")
+                                        {
+                                            event.preventDefault()
+                                            navigateImage("next")
+                                            return
+                                        }
+
+                                        // Ctrl+Left → Previous image
+                                        if ((event.ctrlKey || event.metaKey) && key === "ArrowLeft")
+                                        {
+                                            event.preventDefault()
+                                            navigateImage("prev")
+                                            return
+                                        }
+
+                                        // Skip other shortcuts if modifier keys are held
+                                        if (event.ctrlKey || event.metaKey || event.altKey) return
+
+                                        // + or = → Zoom in
+                                        if (key === "+" || key === "=")
+                                        {
+                                            event.preventDefault()
+                                            zoom(30)
+                                            return
+                                        }
+
+                                        // - → Zoom out
+                                        if (key === "-")
+                                        {
+                                            event.preventDefault()
+                                            zoom(-30)
+                                            return
+                                        }
+
+                                        // P → Pen (Brush)
+                                        if (code === "KeyP")
+                                        {
+                                            event.preventDefault()
+                                            if (lastActiveTool && lastActiveTool !== "brush")
+                                            {
+                                                const activeBtn = toolbar.querySelector(`[data-tool-id="${lastActiveTool}"]`)
+                                                if (activeBtn) activeBtn.click()
+                                            }
+                                            const brushBtn = toolbar.querySelector('[data-tool-id="brush"]')
+                                            if (brushBtn) brushBtn.click()
+                                            return
+                                        }
+
+                                        // E → Eraser / AntiLabel cycle
+                                        if (code === "KeyE")
+                                        {
+                                            event.preventDefault()
+                                            const eraserBtn = toolbar.querySelector('[data-tool-id="eraser"]')
+                                            const antiLabelBtn = toolbar.querySelector('[data-tool-id="anti-label"]')
+
+                                            if (lastActiveTool === "eraser" && antiLabelBtn)
+                                            {
+                                                if (eraserBtn) eraserBtn.click()
+                                                antiLabelBtn.click()
+                                            }
+                                            else if (lastActiveTool === "anti-label")
+                                            {
+                                                if (antiLabelBtn) antiLabelBtn.click()
+                                            }
+                                            else
+                                            {
+                                                if (lastActiveTool)
+                                                {
+                                                    const activeBtn = toolbar.querySelector(`[data-tool-id="${lastActiveTool}"]`)
+                                                    if (activeBtn) activeBtn.click()
+                                                }
+                                                if (eraserBtn) eraserBtn.click()
+                                            }
+                                            return
+                                        }
+
+                                        // S → Save
+                                        if (code === "KeyS")
+                                        {
+                                            event.preventDefault()
+                                            if (!saveButton.disabled) saveButton.click()
+                                            return
+                                        }
+
+                                        // Escape → Save + Close
+                                        if (key === "Escape")
+                                        {
+                                            if (document.saved_event_listeners && document.saved_event_listeners["predict_area_key_up"]) return
+                                            event.preventDefault()
+                                            if (!saveButton.disabled) saveButton.click()
+                                            closeButtonEl.click()
+                                            return
+                                        }
+                                    })
                                 })
                             }
 

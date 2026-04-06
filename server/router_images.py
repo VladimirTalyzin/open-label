@@ -1,6 +1,7 @@
 from os import path, makedirs, remove, listdir
 from json import load, dump, loads
 from datetime import datetime
+from zlib import crc32
 
 from fastapi import APIRouter, Form, HTTPException, UploadFile, File
 from fastapi.responses import JSONResponse, FileResponse
@@ -39,8 +40,9 @@ async def upload_image(id_project: int, image: UploadFile = File(...)):
         return JSONResponse(content={"result": "error", "message": "Image with this name already exists."})
 
     try:
+        image_bytes = await image.read()
         with open(image_path, "wb") as file:
-            file.write(await image.read())
+            file.write(image_bytes)
 
         if not image_name.lower().endswith(".png"):
             img = Image.open(image_path)
@@ -51,10 +53,32 @@ async def upload_image(id_project: int, image: UploadFile = File(...)):
             image_name = png_name
             image_path = png_path
 
-        preview_path, preview_height = create_preview(image_name, image_path, preview_path)
+        with open(image_path, "rb") as f:
+            file_crc = crc32(f.read()) & 0xFFFFFFFF
 
         with open(settings_file, "r") as file_settings:
             settings_data = load(file_settings)
+
+        existing_images = settings_data.get("images", [])
+        for existing_img in existing_images:
+            existing_crc = existing_img.get("crc")
+            if existing_crc is None:
+                existing_file = join_path(images_path, existing_img["image"])
+                if path.exists(existing_file):
+                    with open(existing_file, "rb") as f:
+                        existing_crc = crc32(f.read()) & 0xFFFFFFFF
+                    existing_img["crc"] = existing_crc
+            if existing_crc == file_crc:
+                remove(image_path)
+                with open(settings_file, "w") as file_settings:
+                    dump(settings_data, file_settings)
+                return JSONResponse(content={
+                    "result": "duplicate",
+                    "message": f"Duplicate of existing image: {existing_img['image']}",
+                    "duplicate_of": existing_img["image"]
+                })
+
+        preview_path, preview_height = create_preview(image_name, image_path, preview_path)
 
         if "images" not in settings_data:
             settings_data["images"] = []
@@ -73,7 +97,8 @@ async def upload_image(id_project: int, image: UploadFile = File(...)):
                 "time": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
                 "preview_height": preview_height,
                 "preview_block": block_index,
-                "block_offset": block_offset
+                "block_offset": block_offset,
+                "crc": file_crc
             }
 
         settings_data["images"].append(image_data)

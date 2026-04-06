@@ -607,7 +607,7 @@ function buildResizeSection()
     }
 }
 
-function startExport(project, format, splitValues, augPct, augToggles, shapeMode, resizeMode, resizeSize)
+function startExport(project, format, splitValues, augPct, augToggles, shapeMode, resizeMode, resizeSize, trainingOpts)
 {
     const overlay = document.createElement("div")
     overlay.classList.add("upload-progress-overlay")
@@ -631,9 +631,14 @@ function startExport(project, format, splitValues, augPct, augToggles, shapeMode
     statusText.classList.add("upload-status")
     statusText.textContent = "Preparing dataset..."
 
+    const cancelBtn = document.createElement("button")
+    cancelBtn.classList.add("btn", "btn-outline-danger", "btn-sm", "mt-2")
+    cancelBtn.textContent = "Cancel"
+
     panel.appendChild(title)
     panel.appendChild(progressWrapper)
     panel.appendChild(statusText)
+    panel.appendChild(cancelBtn)
     overlay.appendChild(panel)
     document.body.appendChild(overlay)
 
@@ -652,7 +657,31 @@ function startExport(project, format, splitValues, augPct, augToggles, shapeMode
         resize_size: resizeSize,
     })
 
+    if (trainingOpts && trainingOpts.enabled)
+    {
+        params.set("train_script", "true")
+        params.set("device", trainingOpts.device)
+        params.set("model_variant", trainingOpts.modelVariant || "mmpose")
+        params.set("epochs", trainingOpts.epochs)
+        params.set("batch_size", trainingOpts.batchSize)
+        params.set("imgsz", trainingOpts.imgsz)
+        params.set("lr", trainingOpts.lr)
+        params.set("patience", trainingOpts.patience)
+    }
+
     const eventSource = new EventSource(`/export_dataset/${project.id_project}?${params}`)
+
+    cancelBtn.addEventListener("click", () =>
+    {
+        eventSource.close()
+        progressBar.classList.remove("progress-bar-animated")
+        progressBar.classList.add("bg-warning")
+        progressBar.style.width = "100%"
+        progressBar.textContent = "Cancelled"
+        statusText.textContent = "Export cancelled by user"
+        cancelBtn.disabled = true
+        setTimeout(() => overlay.remove(), 1500)
+    })
 
     eventSource.onmessage = (event) =>
     {
@@ -665,6 +694,7 @@ function startExport(project, format, splitValues, augPct, augToggles, shapeMode
             progressBar.classList.add("bg-success")
             progressBar.style.width = "100%"
             progressBar.textContent = "100%"
+            cancelBtn.style.display = "none"
 
             const stats = [`Total: ${data.total}`]
             if (data.train) stats.push(`Train: ${data.train}`)
@@ -694,7 +724,283 @@ function startExport(project, format, splitValues, augPct, augToggles, shapeMode
         progressBar.classList.remove("progress-bar-animated")
         progressBar.classList.add("bg-danger")
         statusText.textContent = "Export error"
+        cancelBtn.style.display = "none"
         setTimeout(() => overlay.remove(), 3000)
+    }
+}
+
+function svgGpu()
+{
+    return createSvgIcon([
+        "M4 6h16v10H4z",
+        "M1 10h2M21 10h2",
+        "M8 16v2M16 16v2",
+        "M7 9h4v4H7z",
+        "M14 9h3M14 11h3M14 13h2",
+    ])
+}
+
+function buildTrainingSection(getFormat)
+{
+    const card = document.createElement("div")
+    card.classList.add("card", "mb-3")
+
+    const header = document.createElement("div")
+    header.classList.add("card-header", "d-flex", "align-items-center", "gap-2")
+
+    const enableCheck = document.createElement("input")
+    enableCheck.type = "checkbox"
+    enableCheck.classList.add("form-check-input")
+    enableCheck.id = "train-script-enable"
+
+    const headerLabel = document.createElement("label")
+    headerLabel.htmlFor = enableCheck.id
+    headerLabel.style.cursor = "pointer"
+    headerLabel.innerHTML = "<strong>Include Training Script</strong>"
+
+    header.appendChild(enableCheck)
+    header.appendChild(headerLabel)
+
+    const icon = svgGpu()
+    icon.setAttribute("width", "28")
+    icon.setAttribute("height", "28")
+    icon.style.marginLeft = "auto"
+    header.appendChild(icon)
+
+    const body = document.createElement("div")
+    body.classList.add("card-body")
+    body.style.display = "none"
+
+    enableCheck.addEventListener("change", () =>
+    {
+        body.style.display = enableCheck.checked ? "block" : "none"
+    })
+
+    const helpText = document.createElement("small")
+    helpText.classList.add("text-muted", "d-block", "mb-3")
+    helpText.textContent = "A ready-to-run train.py will be added to the archive. Just run it to start training."
+
+    body.appendChild(helpText)
+
+    // Device
+    const deviceRow = document.createElement("div")
+    deviceRow.classList.add("mb-3")
+
+    const deviceLabel = document.createElement("label")
+    deviceLabel.classList.add("form-label")
+    deviceLabel.textContent = "Device"
+
+    const deviceSelect = document.createElement("select")
+    deviceSelect.classList.add("form-select", "form-select-sm")
+    deviceSelect.style.width = "280px"
+
+    const devices = [
+        {value: "gpu", label: "NVIDIA GPU (CUDA)"},
+        {value: "mps", label: "Apple Metal (MPS)"},
+        {value: "rocm", label: "AMD GPU (ROCm)"},
+        {value: "cpu", label: "CPU"},
+    ]
+
+    for (const d of devices)
+    {
+        const opt = document.createElement("option")
+        opt.value = d.value
+        opt.textContent = d.label
+        deviceSelect.appendChild(opt)
+    }
+
+    deviceRow.appendChild(deviceLabel)
+    deviceRow.appendChild(deviceSelect)
+    body.appendChild(deviceRow)
+
+    // Model variant (shown only for COCO format)
+    const modelRow = document.createElement("div")
+    modelRow.classList.add("mb-3")
+    modelRow.style.display = "none"
+
+    const modelLabel = document.createElement("label")
+    modelLabel.classList.add("form-label")
+    modelLabel.textContent = "Model architecture"
+
+    const modelSelect = document.createElement("select")
+    modelSelect.classList.add("form-select", "form-select-sm")
+    modelSelect.style.width = "280px"
+
+    const modelVariants = [
+        {value: "mmpose", label: "MMPose (HRNet-W48)", desc: "recommended"},
+        {value: "vitpose", label: "ViTPose (ViT-B)", desc: "state-of-the-art"},
+        {value: "resnet", label: "PyTorch ResNet50 + Heatmap", desc: "lightweight, no extra deps"},
+    ]
+
+    for (const m of modelVariants)
+    {
+        const opt = document.createElement("option")
+        opt.value = m.value
+        opt.textContent = `${m.label}  \u2014  ${m.desc}`
+        modelSelect.appendChild(opt)
+    }
+
+    modelRow.appendChild(modelLabel)
+    modelRow.appendChild(modelSelect)
+    body.appendChild(modelRow)
+
+    // Epochs
+    const epochsRow = document.createElement("div")
+    epochsRow.classList.add("mb-3", "d-flex", "align-items-center", "gap-2")
+
+    const epochsLabel = document.createElement("label")
+    epochsLabel.classList.add("form-label", "mb-0")
+    epochsLabel.style.width = "120px"
+    epochsLabel.textContent = "Epochs"
+
+    const epochsInput = document.createElement("input")
+    epochsInput.type = "number"
+    epochsInput.classList.add("form-control", "form-control-sm")
+    epochsInput.style.width = "100px"
+    epochsInput.value = "100"
+    epochsInput.min = "1"
+
+    epochsRow.appendChild(epochsLabel)
+    epochsRow.appendChild(epochsInput)
+    body.appendChild(epochsRow)
+
+    // Batch size
+    const batchRow = document.createElement("div")
+    batchRow.classList.add("mb-3", "d-flex", "align-items-center", "gap-2")
+
+    const batchLabel = document.createElement("label")
+    batchLabel.classList.add("form-label", "mb-0")
+    batchLabel.style.width = "120px"
+    batchLabel.textContent = "Batch size"
+
+    const batchInput = document.createElement("input")
+    batchInput.type = "number"
+    batchInput.classList.add("form-control", "form-control-sm")
+    batchInput.style.width = "100px"
+    batchInput.value = "16"
+    batchInput.min = "1"
+
+    batchRow.appendChild(batchLabel)
+    batchRow.appendChild(batchInput)
+    body.appendChild(batchRow)
+
+    // Image size (training)
+    const imgszRow = document.createElement("div")
+    imgszRow.classList.add("mb-3", "d-flex", "align-items-center", "gap-2")
+
+    const imgszLabel = document.createElement("label")
+    imgszLabel.classList.add("form-label", "mb-0")
+    imgszLabel.style.width = "120px"
+    imgszLabel.textContent = "Train image size"
+
+    const imgszInput = document.createElement("input")
+    imgszInput.type = "number"
+    imgszInput.classList.add("form-control", "form-control-sm")
+    imgszInput.style.width = "100px"
+    imgszInput.value = "640"
+    imgszInput.min = "64"
+    imgszInput.step = "32"
+
+    const imgszHelp = document.createElement("small")
+    imgszHelp.classList.add("text-muted")
+    imgszHelp.textContent = "px (YOLO resizes internally)"
+
+    imgszRow.appendChild(imgszLabel)
+    imgszRow.appendChild(imgszInput)
+    imgszRow.appendChild(imgszHelp)
+    body.appendChild(imgszRow)
+
+    // Learning rate
+    const lrRow = document.createElement("div")
+    lrRow.classList.add("mb-3", "d-flex", "align-items-center", "gap-2")
+
+    const lrLabel = document.createElement("label")
+    lrLabel.classList.add("form-label", "mb-0")
+    lrLabel.style.width = "120px"
+    lrLabel.textContent = "Learning rate"
+
+    const lrInput = document.createElement("input")
+    lrInput.type = "number"
+    lrInput.classList.add("form-control", "form-control-sm")
+    lrInput.style.width = "100px"
+    lrInput.value = "0.01"
+    lrInput.min = "0.0001"
+    lrInput.step = "0.001"
+
+    lrRow.appendChild(lrLabel)
+    lrRow.appendChild(lrInput)
+    body.appendChild(lrRow)
+
+    // Patience (early stopping)
+    const patienceRow = document.createElement("div")
+    patienceRow.classList.add("mb-3", "d-flex", "align-items-center", "gap-2")
+
+    const patienceLabel = document.createElement("label")
+    patienceLabel.classList.add("form-label", "mb-0")
+    patienceLabel.style.width = "120px"
+    patienceLabel.textContent = "Patience"
+
+    const patienceInput = document.createElement("input")
+    patienceInput.type = "number"
+    patienceInput.classList.add("form-control", "form-control-sm")
+    patienceInput.style.width = "100px"
+    patienceInput.value = "50"
+    patienceInput.min = "1"
+
+    const patienceHelp = document.createElement("small")
+    patienceHelp.classList.add("text-muted")
+    patienceHelp.textContent = "epochs without improvement"
+
+    patienceRow.appendChild(patienceLabel)
+    patienceRow.appendChild(patienceInput)
+    patienceRow.appendChild(patienceHelp)
+    body.appendChild(patienceRow)
+
+    // Update defaults based on format
+    const updateDefaults = () =>
+    {
+        const fmt = getFormat()
+        if (fmt === "yolo")
+        {
+            lrInput.value = "0.01"
+            imgszRow.style.display = "flex"
+            modelRow.style.display = "none"
+        }
+        else if (fmt === "coco")
+        {
+            lrInput.value = "0.001"
+            imgszRow.style.display = "flex"
+            modelRow.style.display = "block"
+        }
+        else
+        {
+            lrInput.value = "0.005"
+            imgszRow.style.display = "none"
+            modelRow.style.display = "none"
+        }
+    }
+    updateDefaults()
+
+    card.appendChild(header)
+    card.appendChild(body)
+
+    return {
+        element: card,
+        updateDefaults,
+        getOpts: () =>
+        {
+            if (!enableCheck.checked) return null
+            return {
+                enabled: true,
+                device: deviceSelect.value,
+                modelVariant: modelSelect.value,
+                epochs: parseInt(epochsInput.value) || 100,
+                batchSize: parseInt(batchInput.value) || 16,
+                imgsz: parseInt(imgszInput.value) || 640,
+                lr: parseFloat(lrInput.value) || 0.01,
+                patience: parseInt(patienceInput.value) || 50,
+            }
+        }
     }
 }
 
@@ -729,12 +1035,16 @@ export function initExportTabHandler(exportButton, exportDiv, showContent, proje
             const splitSection = buildSplitSection(formatSection.getFormat())
             exportDiv.appendChild(splitSection.element)
 
-            // Update split when format changes
+            const trainingSection = buildTrainingSection(formatSection.getFormat)
+            exportDiv.appendChild(trainingSection.element)
+
+            // Update split and training defaults when format changes
             for (const radio of formatSection.radios)
             {
                 radio.addEventListener("change", () =>
                 {
                     splitSection.setFormat(formatSection.getFormat())
+                    trainingSection.updateDefaults()
                 })
             }
 
@@ -760,7 +1070,8 @@ export function initExportTabHandler(exportButton, exportDiv, showContent, proje
                     augSection.getToggles(),
                     shapeSection.getMode(),
                     resizeSection.getMode(),
-                    resizeSection.getSize()
+                    resizeSection.getSize(),
+                    trainingSection.getOpts()
                 )
                 setTimeout(() => { exportBtn.disabled = false }, 3000)
             })

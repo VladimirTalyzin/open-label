@@ -16,6 +16,7 @@ from PIL import Image
 from utility import join_path
 from helpers import get_script_directory, require_user, user_can_access_project
 from augmentation import apply_mask_blur, generate_augmented, apply_shape_transform
+from router_training import generate_training_script
 
 router = APIRouter()
 
@@ -377,6 +378,13 @@ async def export_dataset(
     shape_mode: str = Query("as_is"),
     resize_mode: str = Query("as_is"),
     resize_size: int = Query(1280),
+    train_script: bool = Query(False),
+    device: str = Query("cpu"),
+    epochs: int = Query(100),
+    batch_size: int = Query(16),
+    imgsz: int = Query(640),
+    lr: float = Query(0.01),
+    patience: int = Query(50),
 ):
     user = require_user(request)
     if not user_can_access_project(user, id_project):
@@ -546,6 +554,35 @@ async def export_dataset(
                         full_path = path.join(root, fname)
                         arcname = path.relpath(full_path, format_dir).replace("\\", "/")
                         zf.write(full_path, arcname)
+
+                # Add training script if requested
+                if train_script:
+                    keypoint_names = [p["name"] for p in skeleton_template.get("points", [])]
+                    connections = skeleton_template.get("connections", [])
+                    num_kpts = len(keypoint_names)
+
+                    # Determine the category file for COCO format
+                    category_file = ""
+                    if format == "coco" and labels_map:
+                        first_label = next(iter(labels_map))
+                        safe_label = "".join(c if c.isalnum() or c in "_-" else "_" for c in first_label)
+                        category_file = f"train/{safe_label}.json"
+
+                    script_params = {
+                        "device": device,
+                        "epochs": epochs,
+                        "batch_size": batch_size,
+                        "imgsz": imgsz,
+                        "lr": lr,
+                        "patience": patience,
+                        "kpt_shape": [num_kpts, 3],
+                        "keypoint_names": keypoint_names,
+                        "skeleton": connections,
+                        "category_file": category_file,
+                    }
+
+                    script_content = generate_training_script(format, script_params)
+                    zf.writestr("train.py", script_content)
 
             token = str(uuid4())
             _export_files[token] = {"path": tmp_zip_path, "name": safe_name}

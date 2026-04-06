@@ -1,5 +1,6 @@
 import shutil
 import zipfile
+import tempfile
 from os import path, makedirs, listdir, remove
 from json import load, dump, loads
 from re import findall
@@ -22,6 +23,8 @@ from helpers import (
 )
 
 router = APIRouter()
+
+_export_files = {}  # token -> {"path": str, "name": str}
 
 
 @router.get("/add_project", tags=["Global"])
@@ -478,18 +481,16 @@ async def export_project(id_project: int, request: Request):
     if not path.exists(project_path):
         raise HTTPException(status_code=404, detail="Project not found")
 
-    buffer = BytesIO()
-    with zipfile.ZipFile(buffer, "w", zipfile.ZIP_DEFLATED) as zf:
-        for root, dirs, files in __import__("os").walk(project_path):
-            rel_root = path.relpath(root, project_path).replace("\\", "/")
-            if rel_root.startswith("deleted"):
-                continue
-            for file_name in files:
-                file_full = path.join(root, file_name)
-                arcname = path.relpath(file_full, project_path).replace("\\", "/")
-                zf.write(file_full, arcname)
+    import os as _os
+    all_files = []
+    for root, dirs, files in _os.walk(project_path):
+        rel_root = path.relpath(root, project_path).replace("\\", "/")
+        if rel_root.startswith("deleted"):
+            continue
+        for file_name in files:
+            all_files.append(path.join(root, file_name))
 
-    buffer.seek(0)
+    total = len(all_files)
 
     settings_file = join_path(project_path, "project_settings.json")
     project_name = f"project_{id_project}"
@@ -500,10 +501,66 @@ async def export_project(id_project: int, request: Request):
                 project_name = data["project_name"]
 
     safe_name = "".join(c if c.isalnum() or c in "._- " else "_" for c in project_name)
+
+    def generate():
+        import json as json_module
+
+        tmp = tempfile.NamedTemporaryFile(delete=False, suffix=".zip")
+        tmp_path = tmp.name
+        tmp.close()
+
+        with zipfile.ZipFile(tmp_path, "w", zipfile.ZIP_DEFLATED) as zf:
+            for idx, file_full in enumerate(all_files):
+                arcname = path.relpath(file_full, project_path).replace("\\", "/")
+                zf.write(file_full, arcname)
+
+                if (idx + 1) % 50 == 0 or idx + 1 == total:
+                    progress = json_module.dumps({
+                        "current": idx + 1,
+                        "total": total,
+                        "file": arcname,
+                    })
+                    yield f"data: {progress}\n\n"
+
+        token = str(uuid4())
+        _export_files[token] = {"path": tmp_path, "name": safe_name}
+
+        done = json_module.dumps({"done": True, "total": total, "token": token})
+        yield f"data: {done}\n\n"
+
+    return StreamingResponse(generate(), media_type="text/event-stream")
+
+
+@router.get("/download_export/{token}", tags=["Project"])
+async def download_export(token: str, request: Request):
+    require_user(request)
+
+    entry = _export_files.pop(token, None)
+    if not entry or not path.exists(entry["path"]):
+        raise HTTPException(status_code=404, detail="Export not found or expired")
+
+    tmp_path = entry["path"]
+    safe_name = entry["name"]
+    file_size = path.getsize(tmp_path)
+
+    def file_stream():
+        try:
+            with open(tmp_path, "rb") as f:
+                while chunk := f.read(1024 * 1024):
+                    yield chunk
+        finally:
+            try:
+                remove(tmp_path)
+            except OSError:
+                pass
+
     return StreamingResponse(
-        buffer,
+        file_stream(),
         media_type="application/zip",
-        headers={"Content-Disposition": f'attachment; filename="{safe_name}.zip"'}
+        headers={
+            "Content-Disposition": f'attachment; filename="{safe_name}.zip"',
+            "Content-Length": str(file_size),
+        },
     )
 
 

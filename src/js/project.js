@@ -242,34 +242,76 @@ export function updateProjects(responseJson, clear)
         addEventListenerWithId(exportButton, "click", "export_click", () =>
         {
             exportButton.disabled = true
-            exportButton.textContent = "Exporting..."
 
-            fetch(`/export_project/${project.id_project}`)
-                .then(r =>
+            const overlay = document.createElement("div")
+            overlay.classList.add("upload-progress-overlay")
+
+            const panel = document.createElement("div")
+            panel.classList.add("upload-progress-panel")
+
+            const title = document.createElement("h5")
+            title.textContent = "Экспорт проекта"
+
+            const progressWrapper = document.createElement("div")
+            progressWrapper.classList.add("progress")
+
+            const progressBar = document.createElement("div")
+            progressBar.classList.add("progress-bar", "progress-bar-striped", "progress-bar-animated")
+            progressBar.style.width = "0%"
+            progressBar.textContent = "0%"
+            progressWrapper.appendChild(progressBar)
+
+            const statusText = document.createElement("div")
+            statusText.classList.add("upload-status")
+            statusText.textContent = "Подготовка архива..."
+
+            panel.appendChild(title)
+            panel.appendChild(progressWrapper)
+            panel.appendChild(statusText)
+            overlay.appendChild(panel)
+            document.body.appendChild(overlay)
+
+            const eventSource = new EventSource(`/export_project/${project.id_project}`)
+
+            eventSource.onmessage = (event) =>
+            {
+                const data = JSON.parse(event.data)
+
+                if (data.done)
                 {
-                    if (r.status === 401)
-                    {
-                        window.location.reload()
-                        throw new Error("Not authenticated")
-                    }
-                    if (!r.ok) throw new Error("Export failed")
-                    return r.blob()
-                })
-                .then(blob =>
-                {
-                    const url = URL.createObjectURL(blob)
+                    eventSource.close()
+                    progressBar.classList.remove("progress-bar-animated")
+                    progressBar.classList.add("bg-success")
+                    progressBar.style.width = "100%"
+                    progressBar.textContent = "100%"
+                    statusText.textContent = `Готово: ${data.total} файлов. Скачивание...`
+
                     const a = document.createElement("a")
-                    a.href = url
+                    a.href = `/download_export/${data.token}`
                     a.download = (project.project_name || `project_${project.id_project}`) + ".zip"
                     a.click()
-                    URL.revokeObjectURL(url)
-                })
-                .catch(err => console.log(err))
-                .finally(() =>
-                {
+
                     exportButton.disabled = false
-                    exportButton.textContent = "Export project"
-                })
+                    setTimeout(() => overlay.remove(), 2000)
+                }
+                else
+                {
+                    const percent = Math.round((data.current / data.total) * 100)
+                    progressBar.style.width = `${percent}%`
+                    progressBar.textContent = `${percent}%`
+                    statusText.textContent = `${data.current} / ${data.total}: ${data.file}`
+                }
+            }
+
+            eventSource.onerror = () =>
+            {
+                eventSource.close()
+                progressBar.classList.remove("progress-bar-animated")
+                progressBar.classList.add("bg-danger")
+                statusText.textContent = "Ошибка при экспорте"
+                exportButton.disabled = false
+                setTimeout(() => overlay.remove(), 3000)
+            }
         })
 
         settingsDiv.appendChild(exportButton)
@@ -1913,49 +1955,45 @@ export function updateProjects(responseJson, clear)
                                     const files = Array.from(input.files)
                                     if (files.length === 0) return
 
-                                    const showProgress = files.length > 5
-                                    let overlay = null
-                                    let progressBar = null
-                                    let statusText = null
-                                    let errorsDiv = null
+                                    const overlay = document.createElement("div")
+                                    overlay.classList.add("upload-progress-overlay")
 
-                                    if (showProgress)
-                                    {
-                                        overlay = document.createElement("div")
-                                        overlay.classList.add("upload-progress-overlay")
+                                    const panel = document.createElement("div")
+                                    panel.classList.add("upload-progress-panel")
 
-                                        const panel = document.createElement("div")
-                                        panel.classList.add("upload-progress-panel")
+                                    const title = document.createElement("h5")
+                                    title.textContent = "Загрузка изображений"
 
-                                        const title = document.createElement("h5")
-                                        title.textContent = "Загрузка изображений"
+                                    const progressWrapper = document.createElement("div")
+                                    progressWrapper.classList.add("progress")
 
-                                        const progressWrapper = document.createElement("div")
-                                        progressWrapper.classList.add("progress")
+                                    const progressBar = document.createElement("div")
+                                    progressBar.classList.add("progress-bar", "progress-bar-striped", "progress-bar-animated")
+                                    progressBar.style.width = "0%"
+                                    progressBar.textContent = "0%"
+                                    progressWrapper.appendChild(progressBar)
 
-                                        progressBar = document.createElement("div")
-                                        progressBar.classList.add("progress-bar", "progress-bar-striped", "progress-bar-animated")
-                                        progressBar.style.width = "0%"
-                                        progressBar.textContent = "0%"
-                                        progressWrapper.appendChild(progressBar)
+                                    const statusText = document.createElement("div")
+                                    statusText.classList.add("upload-status")
+                                    statusText.textContent = `0 / ${files.length}`
 
-                                        statusText = document.createElement("div")
-                                        statusText.classList.add("upload-status")
-                                        statusText.textContent = `0 / ${files.length}`
+                                    const skippedDiv = document.createElement("div")
+                                    skippedDiv.classList.add("upload-skipped")
 
-                                        errorsDiv = document.createElement("div")
-                                        errorsDiv.classList.add("upload-errors")
+                                    const errorsDiv = document.createElement("div")
+                                    errorsDiv.classList.add("upload-errors")
 
-                                        panel.appendChild(title)
-                                        panel.appendChild(progressWrapper)
-                                        panel.appendChild(statusText)
-                                        panel.appendChild(errorsDiv)
-                                        overlay.appendChild(panel)
-                                        document.body.appendChild(overlay)
-                                    }
+                                    panel.appendChild(title)
+                                    panel.appendChild(progressWrapper)
+                                    panel.appendChild(statusText)
+                                    panel.appendChild(skippedDiv)
+                                    panel.appendChild(errorsDiv)
+                                    overlay.appendChild(panel)
+                                    document.body.appendChild(overlay)
 
                                     let uploaded = 0
                                     const errors = []
+                                    const skipped = []
 
                                     for (const file of files)
                                     {
@@ -1976,6 +2014,11 @@ export function updateProjects(responseJson, clear)
                                                 addImage(answer['image_data'], answer['preview_base'] || respJson.preview_base)
                                                 imagesCountSpan.innerHTML = (parseInt(imagesCountSpan.innerHTML) + 1).toString()
                                             }
+                                            else if (answer['result'] === 'duplicate')
+                                            {
+                                                const msg = `${file.name} → ${answer.duplicate_of}`
+                                                skipped.push(msg)
+                                            }
                                             else
                                             {
                                                 const msg = `${file.name}: ${answer.message || 'error'}`
@@ -1992,22 +2035,21 @@ export function updateProjects(responseJson, clear)
 
                                         uploaded++
 
-                                        if (showProgress)
+                                        const percent = Math.round((uploaded / files.length) * 100)
+                                        progressBar.style.width = `${percent}%`
+                                        progressBar.textContent = `${percent}%`
+                                        statusText.textContent = `${uploaded} / ${files.length}`
+                                        if (skipped.length > 0)
                                         {
-                                            const percent = Math.round((uploaded / files.length) * 100)
-                                            progressBar.style.width = `${percent}%`
-                                            progressBar.textContent = `${percent}%`
-                                            statusText.textContent = `${uploaded} / ${files.length}`
-                                            errorsDiv.innerHTML = errors.map(e => `<div>${e}</div>`).join("")
+                                            skippedDiv.innerHTML = `<div class="upload-skipped-title">Пропущены дубликаты (${skipped.length}):</div>` +
+                                                skipped.map(s => `<div>${s}</div>`).join("")
                                         }
+                                        errorsDiv.innerHTML = errors.map(e => `<div>${e}</div>`).join("")
                                     }
 
-                                    if (showProgress && progressBar)
-                                    {
-                                        statusText.textContent = "Ген��рация превью блоков..."
-                                        progressBar.style.width = "100%"
-                                        progressBar.textContent = "100%"
-                                    }
+                                    statusText.textContent = "Генерация превью блоков..."
+                                    progressBar.style.width = "100%"
+                                    progressBar.textContent = "100%"
 
                                     try
                                     {
@@ -2018,19 +2060,18 @@ export function updateProjects(responseJson, clear)
                                         console.error("Error rebuilding all_previews:", err)
                                     }
 
-                                    if (overlay)
+                                    if (errors.length > 0 || skipped.length > 0)
                                     {
+                                        progressBar.classList.remove("progress-bar-animated")
                                         if (errors.length > 0)
-                                        {
-                                            progressBar.classList.remove("progress-bar-animated")
                                             progressBar.classList.add("bg-warning")
-                                            statusText.textContent = `Готово: ${uploaded - errors.length} из ${files.length} (ошибок: ${errors.length})`
-                                            setTimeout(() => overlay.remove(), 3000)
-                                        }
-                                        else
-                                        {
-                                            overlay.remove()
-                                        }
+                                        const successCount = uploaded - errors.length - skipped.length
+                                        statusText.textContent = `Готово: ${successCount} из ${files.length} (пропущено: ${skipped.length}, ошибок: ${errors.length})`
+                                        setTimeout(() => overlay.remove(), skipped.length > 5 ? 5000 : 3000)
+                                    }
+                                    else
+                                    {
+                                        overlay.remove()
                                     }
                                 })
                                 input.click()

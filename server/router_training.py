@@ -300,6 +300,477 @@ def generate_coco_mmpose_script(params):
     batch_size = params.get("batch_size", 16)
     imgsz = params.get("imgsz", 640)
     lr = params.get("lr", 0.001)
+    keypoint_names = params.get("keypoint_names", [])
+    skeleton = params.get("skeleton", [])
+    category_file = params.get("category_file", "train/object.json")
+    num_kpts = len(keypoint_names)
+
+    device_val = _device_arg(device)
+
+    # Build skeleton links as list of dicts for MMPose config
+    skeleton_links = []
+    for i, conn in enumerate(skeleton):
+        if len(conn) >= 2 and conn[0] < num_kpts and conn[1] < num_kpts:
+            skeleton_links.append(
+                f"        dict(link=({repr(keypoint_names[conn[0]])}, {repr(keypoint_names[conn[1]])}), "
+                f"id={i}, color=[0, 255, 0]),"
+            )
+    skeleton_links_str = "\n".join(skeleton_links)
+
+    kpt_info = []
+    for i, name in enumerate(keypoint_names):
+        kpt_info.append(f"        dict(name={repr(name)}, id={i}, color=[255, 128, 0], type='', swap=''),")
+    kpt_info_str = "\n".join(kpt_info)
+
+    script = f'''#!/usr/bin/env python3
+"""
+OpenLabel \u2014 MMPose Training Script (HRNet-W48)
+=================================================
+Uses MMPose with a HRNet-W48 backbone for keypoint detection.
+
+    python train.py
+"""
+
+import subprocess
+import sys
+
+def install_packages():
+    packages = [
+        "torch", "torchvision",
+        "mmengine", "mmcv>=2.0.0",
+        "mmdet>=3.0.0", "mmpose>=1.0.0",
+        "matplotlib", "Pillow", "numpy",
+    ]
+    for pkg in packages:
+        subprocess.check_call([sys.executable, "-m", "pip", "install", "-q", pkg])
+    print("All packages installed.")
+
+{_pip_extras(device)}
+
+if __name__ == "__main__":
+    print("=" * 60)
+    print("  OpenLabel \u2014 MMPose HRNet-W48 Training")
+    print("=" * 60)
+    print()
+
+    print("[1/3] Installing dependencies...")
+    install_packages()
+
+    import os
+    import json
+    import numpy as np
+    from PIL import Image
+    from mmengine.config import Config
+    from mmengine.runner import Runner
+
+    KEYPOINT_NAMES = {repr(keypoint_names)}
+    SKELETON = {repr(skeleton)}
+    NUM_KPTS = {num_kpts}
+
+    # --- Build MMPose config programmatically ---
+    print()
+    print("[2/3] Training...")
+    print(f"  Device:     {device}")
+    print(f"  Epochs:     {epochs}")
+    print(f"  Batch size: {batch_size}")
+    print(f"  Image size: {imgsz}")
+    print(f"  LR:         {lr}")
+    print()
+
+    cat_file = "{category_file}"
+    train_json = os.path.abspath(cat_file)
+    val_json = os.path.abspath(cat_file.replace("train/", "val/"))
+    train_img_dir = os.path.abspath("train/images")
+    val_img_dir = os.path.abspath("val/images")
+
+    dataset_info = dict(
+        dataset_name="openlabel",
+        keypoint_info={{
+{kpt_info_str}
+        }},
+        skeleton_info={{
+{skeleton_links_str}
+        }},
+    )
+
+    cfg_dict = dict(
+        default_scope="mmpose",
+        model=dict(
+            type="TopdownPoseEstimator",
+            data_preprocessor=dict(
+                type="PoseDataPreprocessor",
+                mean=[123.675, 116.28, 103.53],
+                std=[58.395, 57.12, 57.375],
+                bgr_to_rgb=True,
+            ),
+            backbone=dict(
+                type="HRNet",
+                in_channels=3,
+                extra=dict(
+                    stage1=dict(num_modules=1, num_branches=1, block="BOTTLENECK", num_blocks=(4,), num_channels=(64,)),
+                    stage2=dict(num_modules=1, num_branches=2, block="BASIC", num_blocks=(4, 4), num_channels=(48, 96)),
+                    stage3=dict(num_modules=4, num_branches=3, block="BASIC", num_blocks=(4, 4, 4), num_channels=(48, 96, 192)),
+                    stage4=dict(num_modules=3, num_branches=4, block="BASIC", num_blocks=(4, 4, 4, 4), num_channels=(48, 96, 192, 384)),
+                ),
+                init_cfg=dict(type="Pretrained", checkpoint="https://download.openmmlab.com/mmpose/pretrain_models/hrnet_w48-8ef0771d.pth"),
+            ),
+            head=dict(
+                type="HeatmapHead",
+                in_channels=48,
+                out_channels={num_kpts},
+                loss=dict(type="KeypointMSELoss", use_target_weight=True),
+                decoder=dict(type="MSRAHeatmap", input_size=({imgsz}, {imgsz}), heatmap_size=({imgsz // 4}, {imgsz // 4}), sigma=2),
+            ),
+        ),
+        train_dataloader=dict(
+            batch_size={batch_size},
+            num_workers=2,
+            dataset=dict(
+                type="CocoDataset",
+                data_root=".",
+                ann_file=train_json,
+                data_prefix=dict(img="train/images"),
+                metainfo=dataset_info,
+                pipeline=[
+                    dict(type="LoadImage"),
+                    dict(type="GetBBoxCenterScale"),
+                    dict(type="TopdownAffine", input_size=({imgsz}, {imgsz})),
+                    dict(type="GenerateTarget", encoder=dict(type="MSRAHeatmap", input_size=({imgsz}, {imgsz}), heatmap_size=({imgsz // 4}, {imgsz // 4}), sigma=2)),
+                    dict(type="PackPoseInputs"),
+                ],
+            ),
+        ),
+        val_dataloader=dict(
+            batch_size={batch_size},
+            num_workers=2,
+            dataset=dict(
+                type="CocoDataset",
+                data_root=".",
+                ann_file=val_json,
+                data_prefix=dict(img="val/images"),
+                metainfo=dataset_info,
+                pipeline=[
+                    dict(type="LoadImage"),
+                    dict(type="GetBBoxCenterScale"),
+                    dict(type="TopdownAffine", input_size=({imgsz}, {imgsz})),
+                    dict(type="PackPoseInputs"),
+                ],
+            ),
+        ),
+        val_evaluator=dict(type="CocoMetric", ann_file=val_json),
+        train_cfg=dict(by_epoch=True, max_epochs={epochs}, val_interval=10),
+        val_cfg=dict(),
+        optim_wrapper=dict(optimizer=dict(type="Adam", lr={lr})),
+        default_hooks=dict(
+            checkpoint=dict(type="CheckpointHook", interval=10, save_best="coco/AP", rule="greater"),
+            logger=dict(type="LoggerHook", interval=50),
+        ),
+        work_dir="work_dirs/hrnet_w48",
+        launcher="none",
+    )
+
+    cfg = Config(cfg_dict)
+    runner = Runner.from_cfg(cfg)
+    runner.train()
+
+    print("Training complete!")
+
+    # --- Inference demo ---
+    print()
+    print("[3/3] Inference demo...")
+
+    import matplotlib
+    matplotlib.use("TkAgg")
+    import matplotlib.pyplot as plt
+    from mmpose.apis import init_model, inference_topdown
+    from mmpose.structures import merge_data_samples
+
+    # Find best checkpoint
+    work_dir = "work_dirs/hrnet_w48"
+    ckpt_path = None
+    if os.path.exists(os.path.join(work_dir, "best_coco")):
+        best_dir = os.path.join(work_dir, "best_coco")
+        ckpts = [f for f in os.listdir(best_dir) if f.endswith(".pth")]
+        if ckpts:
+            ckpt_path = os.path.join(best_dir, ckpts[0])
+    if not ckpt_path:
+        ckpt_path = os.path.join(work_dir, "epoch_{epochs}.pth")
+
+    print(f"  Using checkpoint: {{ckpt_path}}")
+
+    demo_dir = val_img_dir if os.path.exists(val_img_dir) else train_img_dir
+    demo_images = [f for f in os.listdir(demo_dir) if f.lower().endswith((".png", ".jpg", ".jpeg"))]
+
+    if demo_images:
+        demo_path = os.path.join(demo_dir, demo_images[0])
+        demo_img = Image.open(demo_path).convert("RGB")
+        orig_w, orig_h = demo_img.size
+
+        # Use the full image as bbox
+        bboxes = [[0, 0, orig_w, orig_h]]
+
+        pose_model = init_model(cfg, ckpt_path, device="{device_val}")
+        results = inference_topdown(pose_model, demo_path, bboxes)
+        result = merge_data_samples(results)
+
+        pred_kpts = result.pred_instances.keypoints[0]  # (NUM_KPTS, 2)
+        pred_scores = result.pred_instances.keypoint_scores[0]  # (NUM_KPTS,)
+
+        # Combine into (NUM_KPTS, 3)
+        pred_kpts = np.column_stack([pred_kpts, pred_scores])
+
+{_inference_demo_block(keypoint_names, skeleton)}
+'''
+    return script
+
+
+def generate_coco_vitpose_script(params):
+    """Generate a ViTPose training script (ViT-B, COCO format)."""
+    device = params.get("device", "cpu")
+    epochs = params.get("epochs", 100)
+    batch_size = params.get("batch_size", 16)
+    imgsz = params.get("imgsz", 256)
+    lr = params.get("lr", 0.0005)
+    keypoint_names = params.get("keypoint_names", [])
+    skeleton = params.get("skeleton", [])
+    category_file = params.get("category_file", "train/object.json")
+    num_kpts = len(keypoint_names)
+
+    device_val = _device_arg(device)
+
+    kpt_info = []
+    for i, name in enumerate(keypoint_names):
+        kpt_info.append(f"        dict(name={repr(name)}, id={i}, color=[255, 128, 0], type='', swap=''),")
+    kpt_info_str = "\n".join(kpt_info)
+
+    skeleton_links = []
+    for i, conn in enumerate(skeleton):
+        if len(conn) >= 2 and conn[0] < num_kpts and conn[1] < num_kpts:
+            skeleton_links.append(
+                f"        dict(link=({repr(keypoint_names[conn[0]])}, {repr(keypoint_names[conn[1]])}), "
+                f"id={i}, color=[0, 255, 0]),"
+            )
+    skeleton_links_str = "\n".join(skeleton_links)
+
+    script = f'''#!/usr/bin/env python3
+"""
+OpenLabel \u2014 ViTPose Training Script (ViT-Base)
+==================================================
+Uses MMPose with a ViT-Base (Vision Transformer) backbone for
+state-of-the-art keypoint detection.
+
+    python train.py
+"""
+
+import subprocess
+import sys
+
+def install_packages():
+    packages = [
+        "torch", "torchvision",
+        "mmengine", "mmcv>=2.0.0",
+        "mmdet>=3.0.0", "mmpose>=1.0.0",
+        "timm",
+        "matplotlib", "Pillow", "numpy",
+    ]
+    for pkg in packages:
+        subprocess.check_call([sys.executable, "-m", "pip", "install", "-q", pkg])
+    print("All packages installed.")
+
+{_pip_extras(device)}
+
+if __name__ == "__main__":
+    print("=" * 60)
+    print("  OpenLabel \u2014 ViTPose (ViT-Base) Training")
+    print("=" * 60)
+    print()
+
+    print("[1/3] Installing dependencies...")
+    install_packages()
+
+    import os
+    import json
+    import numpy as np
+    from PIL import Image
+    from mmengine.config import Config
+    from mmengine.runner import Runner
+
+    KEYPOINT_NAMES = {repr(keypoint_names)}
+    SKELETON = {repr(skeleton)}
+    NUM_KPTS = {num_kpts}
+
+    print()
+    print("[2/3] Training...")
+    print(f"  Device:     {device}")
+    print(f"  Epochs:     {epochs}")
+    print(f"  Batch size: {batch_size}")
+    print(f"  Image size: {imgsz}")
+    print(f"  LR:         {lr}")
+    print()
+
+    cat_file = "{category_file}"
+    train_json = os.path.abspath(cat_file)
+    val_json = os.path.abspath(cat_file.replace("train/", "val/"))
+    train_img_dir = os.path.abspath("train/images")
+    val_img_dir = os.path.abspath("val/images")
+
+    dataset_info = dict(
+        dataset_name="openlabel",
+        keypoint_info={{
+{kpt_info_str}
+        }},
+        skeleton_info={{
+{skeleton_links_str}
+        }},
+    )
+
+    cfg_dict = dict(
+        default_scope="mmpose",
+        model=dict(
+            type="TopdownPoseEstimator",
+            data_preprocessor=dict(
+                type="PoseDataPreprocessor",
+                mean=[123.675, 116.28, 103.53],
+                std=[58.395, 57.12, 57.375],
+                bgr_to_rgb=True,
+            ),
+            backbone=dict(
+                type="mmpose.ViT",
+                img_size=({imgsz}, {imgsz}),
+                patch_size=16,
+                embed_dim=768,
+                depth=12,
+                num_heads=12,
+                mlp_ratio=4,
+                qkv_bias=True,
+                drop_path_rate=0.3,
+                init_cfg=dict(
+                    type="Pretrained",
+                    checkpoint="https://download.openmmlab.com/mmpose/v1/pretrained_models/vitpose-b_simcc.pth",
+                ),
+            ),
+            head=dict(
+                type="HeatmapHead",
+                in_channels=768,
+                out_channels={num_kpts},
+                deconv_out_channels=(256, 256),
+                deconv_kernel_sizes=(4, 4),
+                loss=dict(type="KeypointMSELoss", use_target_weight=True),
+                decoder=dict(type="MSRAHeatmap", input_size=({imgsz}, {imgsz}), heatmap_size=({imgsz // 4}, {imgsz // 4}), sigma=2),
+            ),
+        ),
+        train_dataloader=dict(
+            batch_size={batch_size},
+            num_workers=2,
+            dataset=dict(
+                type="CocoDataset",
+                data_root=".",
+                ann_file=train_json,
+                data_prefix=dict(img="train/images"),
+                metainfo=dataset_info,
+                pipeline=[
+                    dict(type="LoadImage"),
+                    dict(type="GetBBoxCenterScale"),
+                    dict(type="TopdownAffine", input_size=({imgsz}, {imgsz})),
+                    dict(type="GenerateTarget", encoder=dict(type="MSRAHeatmap", input_size=({imgsz}, {imgsz}), heatmap_size=({imgsz // 4}, {imgsz // 4}), sigma=2)),
+                    dict(type="PackPoseInputs"),
+                ],
+            ),
+        ),
+        val_dataloader=dict(
+            batch_size={batch_size},
+            num_workers=2,
+            dataset=dict(
+                type="CocoDataset",
+                data_root=".",
+                ann_file=val_json,
+                data_prefix=dict(img="val/images"),
+                metainfo=dataset_info,
+                pipeline=[
+                    dict(type="LoadImage"),
+                    dict(type="GetBBoxCenterScale"),
+                    dict(type="TopdownAffine", input_size=({imgsz}, {imgsz})),
+                    dict(type="PackPoseInputs"),
+                ],
+            ),
+        ),
+        val_evaluator=dict(type="CocoMetric", ann_file=val_json),
+        train_cfg=dict(by_epoch=True, max_epochs={epochs}, val_interval=10),
+        val_cfg=dict(),
+        optim_wrapper=dict(
+            optimizer=dict(type="AdamW", lr={lr}, weight_decay=0.1),
+            paramwise_cfg=dict(
+                custom_keys=dict(
+                    backbone=dict(lr_mult=0.1),
+                ),
+            ),
+        ),
+        default_hooks=dict(
+            checkpoint=dict(type="CheckpointHook", interval=10, save_best="coco/AP", rule="greater"),
+            logger=dict(type="LoggerHook", interval=50),
+        ),
+        work_dir="work_dirs/vitpose_b",
+        launcher="none",
+    )
+
+    cfg = Config(cfg_dict)
+    runner = Runner.from_cfg(cfg)
+    runner.train()
+
+    print("Training complete!")
+
+    # --- Inference demo ---
+    print()
+    print("[3/3] Inference demo...")
+
+    import matplotlib
+    matplotlib.use("TkAgg")
+    import matplotlib.pyplot as plt
+    from mmpose.apis import init_model, inference_topdown
+    from mmpose.structures import merge_data_samples
+
+    work_dir = "work_dirs/vitpose_b"
+    ckpt_path = None
+    if os.path.exists(os.path.join(work_dir, "best_coco")):
+        best_dir = os.path.join(work_dir, "best_coco")
+        ckpts = [f for f in os.listdir(best_dir) if f.endswith(".pth")]
+        if ckpts:
+            ckpt_path = os.path.join(best_dir, ckpts[0])
+    if not ckpt_path:
+        ckpt_path = os.path.join(work_dir, "epoch_{epochs}.pth")
+
+    print(f"  Using checkpoint: {{ckpt_path}}")
+
+    demo_dir = val_img_dir if os.path.exists(val_img_dir) else train_img_dir
+    demo_images = [f for f in os.listdir(demo_dir) if f.lower().endswith((".png", ".jpg", ".jpeg"))]
+
+    if demo_images:
+        demo_path = os.path.join(demo_dir, demo_images[0])
+        demo_img = Image.open(demo_path).convert("RGB")
+        orig_w, orig_h = demo_img.size
+
+        bboxes = [[0, 0, orig_w, orig_h]]
+
+        pose_model = init_model(cfg, ckpt_path, device="{device_val}")
+        results = inference_topdown(pose_model, demo_path, bboxes)
+        result = merge_data_samples(results)
+
+        pred_kpts = result.pred_instances.keypoints[0]
+        pred_scores = result.pred_instances.keypoint_scores[0]
+        pred_kpts = np.column_stack([pred_kpts, pred_scores])
+
+{_inference_demo_block(keypoint_names, skeleton)}
+'''
+    return script
+
+
+def generate_coco_resnet_script(params):
+    """Generate a pure PyTorch ResNet50 + regression head training script (COCO format)."""
+    device = params.get("device", "cpu")
+    epochs = params.get("epochs", 100)
+    batch_size = params.get("batch_size", 16)
+    imgsz = params.get("imgsz", 640)
+    lr = params.get("lr", 0.001)
     patience = params.get("patience", 50)
     keypoint_names = params.get("keypoint_names", [])
     skeleton = params.get("skeleton", [])
@@ -309,10 +780,10 @@ def generate_coco_mmpose_script(params):
 
     script = f'''#!/usr/bin/env python3
 """
-OpenLabel — COCO Keypoints Training Script (PyTorch)
-=====================================================
-Lightweight keypoint detector training using a ResNet + Heatmap head.
-No external framework dependencies (MMPose, etc.) — pure PyTorch.
+OpenLabel \u2014 COCO Keypoints Training Script (PyTorch)
+======================================================
+Lightweight keypoint detector: ResNet50 + regression head.
+No external framework dependencies \u2014 pure PyTorch.
 
     python train.py
 """
@@ -321,7 +792,7 @@ import subprocess
 import sys
 
 def install_packages():
-    packages = ["torch", "torchvision", "matplotlib", "Pillow", "numpy", "pycocotools"]
+    packages = ["torch", "torchvision", "matplotlib", "Pillow", "numpy"]
     for pkg in packages:
         subprocess.check_call([sys.executable, "-m", "pip", "install", "-q", pkg])
     print("All packages installed.")
@@ -330,7 +801,7 @@ def install_packages():
 
 if __name__ == "__main__":
     print("=" * 60)
-    print("  OpenLabel — COCO Keypoints Training")
+    print("  OpenLabel \u2014 PyTorch ResNet50 Keypoint Training")
     print("=" * 60)
     print()
 
@@ -345,7 +816,7 @@ if __name__ == "__main__":
     import torch.optim as optim
     from torch.utils.data import Dataset, DataLoader
     from torchvision import transforms, models
-    from PIL import Image, ImageDraw
+    from PIL import Image
 
     _dev = "{torch_device}"
     if _dev == "cuda" and torch.cuda.is_available():
@@ -388,15 +859,12 @@ if __name__ == "__main__":
             img_path = os.path.join(self.img_dir, img_info["file_name"])
             img = Image.open(img_path).convert("RGB")
             orig_w, orig_h = img.size
-
             kpts = ann["keypoints"]
             coords = np.zeros((NUM_KPTS, 3), dtype=np.float32)
             for i in range(NUM_KPTS):
                 x, y, v = kpts[i*3], kpts[i*3+1], kpts[i*3+2]
                 coords[i] = [x / orig_w, y / orig_h, v]
-
-            img_tensor = self.transform(img)
-            return img_tensor, torch.tensor(coords, dtype=torch.float32)
+            return self.transform(img), torch.tensor(coords, dtype=torch.float32)
 
     # --- Model ---
     class PoseNet(nn.Module):
@@ -405,18 +873,12 @@ if __name__ == "__main__":
             backbone = models.resnet50(weights=models.ResNet50_Weights.DEFAULT)
             self.features = nn.Sequential(*list(backbone.children())[:-2])
             self.head = nn.Sequential(
-                nn.AdaptiveAvgPool2d(1),
-                nn.Flatten(),
-                nn.Linear(2048, 512),
-                nn.ReLU(),
-                nn.Dropout(0.3),
+                nn.AdaptiveAvgPool2d(1), nn.Flatten(),
+                nn.Linear(2048, 512), nn.ReLU(), nn.Dropout(0.3),
                 nn.Linear(512, num_keypoints * 3),
             )
-
         def forward(self, x):
-            x = self.features(x)
-            x = self.head(x)
-            return x.view(-1, NUM_KPTS, 3)
+            return self.head(self.features(x)).view(-1, NUM_KPTS, 3)
 
     # --- Training ---
     print()
@@ -431,10 +893,6 @@ if __name__ == "__main__":
     train_ds = KeypointDataset(train_json, train_img_dir)
     train_loader = DataLoader(train_ds, batch_size=BATCH_SIZE, shuffle=True, num_workers=0)
 
-    val_ds = None
-    if os.path.exists(val_json) and os.path.exists(val_img_dir):
-        val_ds = KeypointDataset(val_json, val_img_dir)
-
     model = PoseNet(NUM_KPTS).to(DEVICE)
     optimizer = optim.Adam(model.parameters(), lr=LR)
     criterion = nn.SmoothL1Loss()
@@ -446,10 +904,8 @@ if __name__ == "__main__":
         model.train()
         total_loss = 0
         for imgs, targets in train_loader:
-            imgs = imgs.to(DEVICE)
-            targets = targets.to(DEVICE)
+            imgs, targets = imgs.to(DEVICE), targets.to(DEVICE)
             preds = model(imgs)
-            # Mask out invisible keypoints
             vis_mask = (targets[:, :, 2] > 0).unsqueeze(-1).expand_as(preds)
             loss = criterion(preds[vis_mask], targets[vis_mask])
             optimizer.zero_grad()
@@ -488,62 +944,25 @@ if __name__ == "__main__":
 
     if demo_images:
         demo_path = os.path.join(demo_dir, demo_images[0])
-        img = Image.open(demo_path).convert("RGB")
-        orig_w, orig_h = img.size
+        demo_img = Image.open(demo_path).convert("RGB")
+        orig_w, orig_h = demo_img.size
 
         transform = transforms.Compose([
             transforms.Resize((IMG_SIZE, IMG_SIZE)),
             transforms.ToTensor(),
             transforms.Normalize([0.485, 0.456, 0.406], [0.229, 0.224, 0.225]),
         ])
-        inp = transform(img).unsqueeze(0).to(DEVICE)
+        inp = transform(demo_img).unsqueeze(0).to(DEVICE)
 
         with torch.no_grad():
             pred = model(inp)[0].cpu().numpy()
 
-        fig, axes = plt.subplots(1, 2, figsize=(16, 8))
-        axes[0].imshow(img)
-        axes[0].set_title("Original")
-        axes[0].axis("off")
+        # Convert normalized coords to pixel coords
+        pred_kpts = np.zeros((NUM_KPTS, 3))
+        for i in range(NUM_KPTS):
+            pred_kpts[i] = [pred[i][0] * orig_w, pred[i][1] * orig_h, pred[i][2]]
 
-        axes[1].imshow(img)
-        axes[1].set_title("Prediction")
-        axes[1].axis("off")
-
-        COLORS = plt.cm.tab20(np.linspace(0, 1, max(NUM_KPTS, 1)))
-
-        for conn in SKELETON:
-            if len(conn) >= 2:
-                i1, i2 = conn[0], conn[1]
-                if i1 < NUM_KPTS and i2 < NUM_KPTS:
-                    if pred[i1][2] > 0.3 and pred[i2][2] > 0.3:
-                        axes[1].plot(
-                            [pred[i1][0]*orig_w, pred[i2][0]*orig_w],
-                            [pred[i1][1]*orig_h, pred[i2][1]*orig_h],
-                            "c-", linewidth=2, alpha=0.7,
-                        )
-
-        for idx, kp in enumerate(pred):
-            if kp[2] > 0.3:
-                px, py = kp[0]*orig_w, kp[1]*orig_h
-                color = COLORS[idx % len(COLORS)]
-                axes[1].plot(px, py, "o", color=color, markersize=6)
-                if idx < len(KEYPOINT_NAMES):
-                    axes[1].annotate(
-                        KEYPOINT_NAMES[idx], (px, py),
-                        fontsize=6, color="white",
-                        bbox=dict(boxstyle="round,pad=0.15", fc="black", alpha=0.6),
-                        ha="center", va="bottom", xytext=(0, 5),
-                        textcoords="offset points",
-                    )
-
-        plt.suptitle("OpenLabel — Keypoint Inference Result", fontsize=14, fontweight="bold")
-        plt.tight_layout()
-        plt.savefig("inference_result.png", dpi=150, bbox_inches="tight")
-        print(f"  Result saved to: inference_result.png")
-        plt.show()
-
-    print("Done!")
+{_inference_demo_block(keypoint_names, skeleton)}
 '''
     return script
 
@@ -657,6 +1076,7 @@ def generate_training_script(format_name, params):
     Args:
         format_name: "yolo", "coco", or "dlc"
         params: dict with training parameters
+            For COCO: params["model_variant"] can be "mmpose", "vitpose", or "resnet"
 
     Returns:
         str: Python script content
@@ -664,7 +1084,13 @@ def generate_training_script(format_name, params):
     if format_name == "yolo":
         return generate_yolo_script(params)
     elif format_name == "coco":
-        return generate_mmpose_script(params)
+        variant = params.get("model_variant", "mmpose")
+        if variant == "vitpose":
+            return generate_coco_vitpose_script(params)
+        elif variant == "resnet":
+            return generate_coco_resnet_script(params)
+        else:  # "mmpose" (default)
+            return generate_coco_mmpose_script(params)
     elif format_name == "dlc":
         return generate_dlc_script(params)
     else:

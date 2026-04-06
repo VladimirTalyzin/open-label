@@ -393,7 +393,221 @@ function buildSplitSection(initialFormat)
     }
 }
 
-function startExport(project, format, splitValues, augPct, augToggles)
+function buildShapeSection()
+{
+    const card = document.createElement("div")
+    card.classList.add("card", "mb-3")
+
+    const header = document.createElement("div")
+    header.classList.add("card-header")
+    header.innerHTML = "<strong>Image Aspect Ratio</strong>"
+
+    const body = document.createElement("div")
+    body.classList.add("card-body")
+
+    const modes = [
+        {
+            value: "crop_square",
+            label: "Crop to square around object",
+            desc: "Builds the largest square centred on the bounding box. Pads with black if needed.",
+            svgPaths: [
+                "M3 3h18v18H3z",
+                "M7 8h10v8H7z",
+            ],
+        },
+        {
+            value: "pad_square",
+            label: "Pad to square (letterbox)",
+            desc: "Adds black bars to make the image 1\u00d71, no distortion.",
+            svgPaths: [
+                "M1 4h22v16H1z",
+                "M1 1h22v2H1zM1 21h22v2H1z",
+            ],
+        },
+        {
+            value: "as_is",
+            label: "As is (keep original proportions)",
+            desc: "No changes to the aspect ratio. The model framework will handle it.",
+            svgPaths: [
+                "M2 4h20v16H2z",
+            ],
+        },
+        {
+            value: "stretch_square",
+            label: "Stretch to square",
+            desc: "Resizes to 1\u00d71 by stretching. Distorts proportions.",
+            warn: true,
+            svgPaths: [
+                "M3 3h18v18H3z",
+                "M8 9l-4 3 4 3M16 9l4 3-4 3",
+            ],
+        },
+    ]
+
+    const radios = []
+
+    for (const mode of modes)
+    {
+        const wrapper = document.createElement("div")
+        wrapper.classList.add("form-check", "mb-2")
+        wrapper.style.cssText = "display:flex;align-items:flex-start;gap:10px;"
+
+        const radio = document.createElement("input")
+        radio.classList.add("form-check-input")
+        radio.type = "radio"
+        radio.name = "shape-mode"
+        radio.value = mode.value
+        radio.id = `shape-${mode.value}`
+        radio.checked = mode.value === "crop_square"
+        radio.style.marginTop = "6px"
+
+        const labelCol = document.createElement("div")
+        labelCol.style.flex = "1"
+
+        const svg = createSvgIcon(mode.svgPaths)
+        svg.setAttribute("width", "32")
+        svg.setAttribute("height", "32")
+        if (mode.warn)
+        {
+            svg.querySelectorAll("path").forEach(p => p.setAttribute("stroke", "#dc3545"))
+        }
+
+        const nameRow = document.createElement("div")
+        nameRow.style.cssText = "display:flex;align-items:center;gap:8px;"
+
+        const label = document.createElement("label")
+        label.htmlFor = radio.id
+        label.style.cursor = "pointer"
+
+        const strong = document.createElement("strong")
+        strong.textContent = mode.label
+        label.appendChild(strong)
+
+        if (mode.warn)
+        {
+            const badge = document.createElement("span")
+            badge.classList.add("badge", "bg-danger", "ms-2")
+            badge.textContent = "not recommended"
+            label.appendChild(badge)
+        }
+
+        nameRow.appendChild(svg)
+        nameRow.appendChild(label)
+
+        const desc = document.createElement("small")
+        desc.classList.add("text-muted")
+        desc.style.display = "block"
+        desc.style.marginLeft = "40px"
+        desc.textContent = mode.desc
+
+        labelCol.appendChild(nameRow)
+        labelCol.appendChild(desc)
+
+        wrapper.appendChild(radio)
+        wrapper.appendChild(labelCol)
+        body.appendChild(wrapper)
+
+        radios.push(radio)
+    }
+
+    card.appendChild(header)
+    card.appendChild(body)
+
+    return {
+        element: card,
+        getMode: () =>
+        {
+            for (const r of radios) if (r.checked) return r.value
+            return "as_is"
+        }
+    }
+}
+
+function buildResizeSection()
+{
+    const card = document.createElement("div")
+    card.classList.add("card", "mb-3")
+
+    const header = document.createElement("div")
+    header.classList.add("card-header")
+    header.innerHTML = "<strong>Image Size (longest side)</strong>"
+
+    const body = document.createElement("div")
+    body.classList.add("card-body")
+
+    const asIsWrapper = document.createElement("div")
+    asIsWrapper.classList.add("form-check", "mb-2")
+
+    const asIsRadio = document.createElement("input")
+    asIsRadio.classList.add("form-check-input")
+    asIsRadio.type = "radio"
+    asIsRadio.name = "resize-mode"
+    asIsRadio.value = "as_is"
+    asIsRadio.id = "resize-as-is"
+    asIsRadio.checked = true
+
+    const asIsLabel = document.createElement("label")
+    asIsLabel.classList.add("form-check-label")
+    asIsLabel.htmlFor = "resize-as-is"
+    asIsLabel.textContent = "Keep original resolution"
+
+    asIsWrapper.appendChild(asIsRadio)
+    asIsWrapper.appendChild(asIsLabel)
+    body.appendChild(asIsWrapper)
+
+    const customWrapper = document.createElement("div")
+    customWrapper.classList.add("form-check", "mb-2")
+
+    const customRadio = document.createElement("input")
+    customRadio.classList.add("form-check-input")
+    customRadio.type = "radio"
+    customRadio.name = "resize-mode"
+    customRadio.value = "custom"
+    customRadio.id = "resize-custom"
+
+    const customLabel = document.createElement("label")
+    customLabel.classList.add("form-check-label")
+    customLabel.htmlFor = "resize-custom"
+    customLabel.textContent = "Resize longest side to:"
+
+    const sizeInput = document.createElement("input")
+    sizeInput.type = "number"
+    sizeInput.classList.add("form-control", "form-control-sm", "d-inline-block", "ms-2")
+    sizeInput.style.width = "100px"
+    sizeInput.value = "1280"
+    sizeInput.min = "64"
+    sizeInput.max = "8192"
+    sizeInput.disabled = true
+
+    const pxLabel = document.createElement("span")
+    pxLabel.classList.add("ms-1", "text-muted")
+    pxLabel.textContent = "px"
+
+    customWrapper.appendChild(customRadio)
+    customWrapper.appendChild(customLabel)
+    customWrapper.appendChild(sizeInput)
+    customWrapper.appendChild(pxLabel)
+    body.appendChild(customWrapper)
+
+    const helpText = document.createElement("small")
+    helpText.classList.add("text-muted", "d-block", "mt-1")
+    helpText.textContent = "Resizes proportionally by the longest side. Applied after aspect ratio transform."
+    body.appendChild(helpText)
+
+    asIsRadio.addEventListener("change", () => { sizeInput.disabled = true })
+    customRadio.addEventListener("change", () => { sizeInput.disabled = false; sizeInput.focus() })
+
+    card.appendChild(header)
+    card.appendChild(body)
+
+    return {
+        element: card,
+        getMode: () => customRadio.checked ? "custom" : "as_is",
+        getSize: () => parseInt(sizeInput.value) || 1280,
+    }
+}
+
+function startExport(project, format, splitValues, augPct, augToggles, shapeMode, resizeMode, resizeSize)
 {
     const overlay = document.createElement("div")
     overlay.classList.add("upload-progress-overlay")
@@ -433,6 +647,9 @@ function startExport(project, format, splitValues, augPct, augToggles)
         aug_rotate: augToggles.rotate,
         aug_brightness: augToggles.brightness,
         aug_crop: augToggles.crop,
+        shape_mode: shapeMode,
+        resize_mode: resizeMode,
+        resize_size: resizeSize,
     })
 
     const eventSource = new EventSource(`/export_dataset/${project.id_project}?${params}`)
@@ -500,6 +717,12 @@ export function initExportTabHandler(exportButton, exportDiv, showContent, proje
             const formatSection = buildFormatSection()
             exportDiv.appendChild(formatSection.element)
 
+            const shapeSection = buildShapeSection()
+            exportDiv.appendChild(shapeSection.element)
+
+            const resizeSection = buildResizeSection()
+            exportDiv.appendChild(resizeSection.element)
+
             const augSection = buildAugmentationSection()
             exportDiv.appendChild(augSection.element)
 
@@ -534,7 +757,10 @@ export function initExportTabHandler(exportButton, exportDiv, showContent, proje
                     formatSection.getFormat(),
                     splitSection.getValues(),
                     augSection.getPct(),
-                    augSection.getToggles()
+                    augSection.getToggles(),
+                    shapeSection.getMode(),
+                    resizeSection.getMode(),
+                    resizeSection.getSize()
                 )
                 setTimeout(() => { exportBtn.disabled = false }, 3000)
             })

@@ -42,6 +42,8 @@ export default defineConfig({
       '/get_skeleton_svg': 'http://localhost:8001',
       '/get_skeleton_mask': 'http://localhost:8001',
       '/upload_skeleton_mask': 'http://localhost:8001',
+      '/export_dataset': 'http://localhost:8001',
+      '/download_dataset': 'http://localhost:8001',
     },
   },
 })

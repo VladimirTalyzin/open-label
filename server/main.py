@@ -20,6 +20,7 @@ from router_images import router as images_router
 from router_masks import router as masks_router
 from router_skeletons import router as skeletons_router
 from router_predict import router as predict_router
+from router_export import router as export_router
 
 init_db()
 
@@ -46,6 +47,7 @@ app.include_router(images_router)
 app.include_router(masks_router)
 app.include_router(skeletons_router)
 app.include_router(predict_router)
+app.include_router(export_router)
 
 if __name__ == "__main__":
     import uvicorn

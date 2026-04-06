@@ -4,3 +4,4 @@ Pillow
 httpx
 python-multipart
 colorama
+numpy

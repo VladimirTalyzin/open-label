@@ -10,6 +10,7 @@ import {
     getActiveLabel, getColor, activateLabel, checkUnsaveAndSave, saveLabelData, predictObjects
 } from "./labels.js"
 import {createSkeletonTab, initSkeletonTabHandler} from "./skeletonTab.js"
+import {createExportTab, initExportTabHandler} from "./exportTab.js"
 import {setupSkeletonMode} from "./skeletonTools.js"
 
 export function updateProject(idProject)
@@ -139,6 +140,11 @@ export function updateProjects(responseJson, clear)
         const skeletonButton = skeletonTab.button
         const skeletonDiv = skeletonTab.div
 
+        const exportTabData = createExportTab(project)
+        const exportLi = exportTabData.li
+        const exportTabBtn = exportTabData.button
+        const exportDiv = exportTabData.div
+
         const tabContentWrapper = document.createElement("div")
         tabContentWrapper.classList.add("project-tab-content")
         tabContentWrapper.style.display = "none"
@@ -211,6 +217,7 @@ export function updateProjects(responseJson, clear)
                         project.project_type = typeSelect.value
                         skeletonLi.style.display = typeSelect.value === "yolo-skeleton" ? "" : "none"
                         labelsLi.style.display = typeSelect.value === "yolo-skeleton" ? "none" : ""
+                        exportLi.style.display = (typeSelect.value === "yolo-skeleton" && project.annotated_count > 0) ? "" : "none"
                         typeSelect.style.borderColor = "green"
                         typeSelect.style.borderWidth = "3px"
                         setTimeout(() =>
@@ -425,10 +432,12 @@ export function updateProjects(responseJson, clear)
         projectButtons.appendChild(settingsLi)
         projectButtons.appendChild(labelsLi)
         projectButtons.appendChild(skeletonLi)
+        projectButtons.appendChild(exportLi)
         tabContentWrapper.appendChild(imagesDiv)
         tabContentWrapper.appendChild(labelsDiv)
         tabContentWrapper.appendChild(settingsDiv)
         tabContentWrapper.appendChild(skeletonDiv)
+        tabContentWrapper.appendChild(exportDiv)
         projectCard.appendChild(projectCardBody)
         projectCard.appendChild(projectButtons)
         projectCard.appendChild(tabContentWrapper)
@@ -439,7 +448,8 @@ export function updateProjects(responseJson, clear)
             {button: imagesButton, div: imagesDiv},
             {button: labelsButton, div: labelsDiv},
             {button: settingsButton, div: settingsDiv},
-            {button: skeletonButton, div: skeletonDiv}
+            {button: skeletonButton, div: skeletonDiv},
+            {button: exportTabBtn, div: exportDiv}
         ]
 
         const showContent = (currentBlock, onFirstOpen = null, onOpen = null) =>
@@ -450,6 +460,7 @@ export function updateProjects(responseJson, clear)
             labelsDiv.style.display = "none"
             settingsDiv.style.display = "none"
             skeletonDiv.style.display = "none"
+            exportDiv.style.display = "none"
 
             tabMap.forEach(t => t.button.classList.remove("active"))
 
@@ -2092,5 +2103,6 @@ export function updateProjects(responseJson, clear)
         addEventListenerWithId(labelsButton, 'click', 'show_labels', (e) => { e.preventDefault(); showContent(labelsDiv) })
         addEventListenerWithId(settingsButton, 'click', 'show_settings', (e) => { e.preventDefault(); showContent(settingsDiv) })
         initSkeletonTabHandler(skeletonButton, skeletonDiv, showContent, project)
+        initExportTabHandler(exportTabBtn, exportDiv, showContent, project)
     }
 }

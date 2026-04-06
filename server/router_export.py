@@ -379,6 +379,7 @@ async def export_dataset(
     resize_mode: str = Query("as_is"),
     resize_size: int = Query(1280),
     train_script: bool = Query(False),
+    model_variant: str = Query("mmpose"),
     device: str = Query("cpu"),
     epochs: int = Query(100),
     batch_size: int = Query(16),
@@ -570,6 +571,7 @@ async def export_dataset(
 
                     script_params = {
                         "device": device,
+                        "model_variant": model_variant,
                         "epochs": epochs,
                         "batch_size": batch_size,
                         "imgsz": imgsz,

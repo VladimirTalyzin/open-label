@@ -153,6 +153,216 @@ def augment_random_crop(image, skeletons):
     return resized, new_skeletons
 
 
+# ---------------------------------------------------------------------------
+# Image shape transforms (applied BEFORE augmentation, per-skeleton instance)
+# ---------------------------------------------------------------------------
+
+
+def shape_crop_to_square(image, skeletons):
+    """Mode 1: Crop to the largest possible square around bbox, pad with black if needed.
+
+    Algorithm:
+    - Compute the combined bounding box of all visible keypoints (+ bboxPad).
+    - The target square side = min(img_w, img_h) (touches shorter image edge).
+    - If bbox does not fit inside that square, enlarge the square to contain bbox.
+    - Centre the square on the bbox centre, shift to stay inside the image.
+    - If the square extends beyond the image, paste the crop onto a black canvas.
+    - Recalculate keypoint coordinates relative to the new crop origin.
+    """
+    w, h = image.size
+
+    # Gather bbox across all skeletons
+    all_x, all_y = [], []
+    for skel in skeletons:
+        pts = skel.get("points", [])
+        bbox_pad = skel.get("bboxPad")
+        vis_x = [p["x"] for p in pts if p.get("visible", 2) > 0]
+        vis_y = [p["y"] for p in pts if p.get("visible", 2) > 0]
+        if vis_x:
+            pad_l = bbox_pad.get("left", 0) if bbox_pad else 0
+            pad_r = bbox_pad.get("right", 0) if bbox_pad else 0
+            pad_t = bbox_pad.get("top", 0) if bbox_pad else 0
+            pad_b = bbox_pad.get("bottom", 0) if bbox_pad else 0
+            all_x.append(min(vis_x) - pad_l)
+            all_x.append(max(vis_x) + pad_r)
+            all_y.append(min(vis_y) - pad_t)
+            all_y.append(max(vis_y) + pad_b)
+
+    if not all_x:
+        return image, skeletons  # nothing to crop
+
+    bbox_x1 = min(all_x)
+    bbox_y1 = min(all_y)
+    bbox_x2 = max(all_x)
+    bbox_y2 = max(all_y)
+    bbox_w = bbox_x2 - bbox_x1
+    bbox_h = bbox_y2 - bbox_y1
+    bbox_cx = (bbox_x1 + bbox_x2) / 2
+    bbox_cy = (bbox_y1 + bbox_y2) / 2
+
+    # Target side: try min(w, h), but at least as large as bbox
+    side = max(min(w, h), bbox_w, bbox_h)
+
+    # Centre the square on the bbox centre
+    sq_x1 = bbox_cx - side / 2
+    sq_y1 = bbox_cy - side / 2
+    sq_x2 = sq_x1 + side
+    sq_y2 = sq_y1 + side
+
+    # Try to shift the square to stay within the image (avoid black padding if possible)
+    if sq_x1 < 0 and sq_x2 <= w:
+        sq_x2 -= sq_x1
+        sq_x1 = 0
+    elif sq_x2 > w and sq_x1 >= 0:
+        sq_x1 -= (sq_x2 - w)
+        sq_x2 = w
+    if sq_y1 < 0 and sq_y2 <= h:
+        sq_y2 -= sq_y1
+        sq_y1 = 0
+    elif sq_y2 > h and sq_y1 >= 0:
+        sq_y1 -= (sq_y2 - h)
+        sq_y2 = h
+
+    # Determine the actual crop region (clamped to image) and padding
+    crop_x1 = max(0, int(sq_x1))
+    crop_y1 = max(0, int(sq_y1))
+    crop_x2 = min(w, int(sq_x2))
+    crop_y2 = min(h, int(sq_y2))
+
+    cropped = image.crop((crop_x1, crop_y1, crop_x2, crop_y2))
+
+    # Offset inside the black canvas
+    paste_x = int(max(0, -sq_x1))
+    paste_y = int(max(0, -sq_y1))
+
+    canvas_side = int(side)
+    canvas = Image.new("RGB", (canvas_side, canvas_side), (0, 0, 0))
+    canvas.paste(cropped, (paste_x, paste_y))
+
+    # Keypoint offset: original coords -> new coords
+    offset_x = sq_x1  # may be negative (= padding)
+    offset_y = sq_y1
+
+    new_skeletons = []
+    for skel in skeletons:
+        new_skel = copy.deepcopy(skel)
+        new_skel["points"] = _transform_keypoints(
+            skel["points"], lambda x, y: (x - offset_x, y - offset_y)
+        )
+        if "bboxPad" in new_skel:
+            pass  # padding values stay the same (no scaling, just shift)
+        new_skeletons.append(new_skel)
+
+    return canvas, new_skeletons
+
+
+def shape_pad_to_square(image, skeletons):
+    """Mode 2: Pad image to 1:1 with black bars (letterbox)."""
+    w, h = image.size
+    if w == h:
+        return image, copy.deepcopy(skeletons)
+
+    side = max(w, h)
+    canvas = Image.new("RGB", (side, side), (0, 0, 0))
+    paste_x = (side - w) // 2
+    paste_y = (side - h) // 2
+    canvas.paste(image, (paste_x, paste_y))
+
+    new_skeletons = []
+    for skel in skeletons:
+        new_skel = copy.deepcopy(skel)
+        new_skel["points"] = _transform_keypoints(
+            skel["points"], lambda x, y: (x + paste_x, y + paste_y)
+        )
+        new_skeletons.append(new_skel)
+
+    return canvas, new_skeletons
+
+
+def shape_stretch_to_square(image, skeletons):
+    """Mode 4: Resize (stretch) to square. NOT recommended — distorts proportions."""
+    w, h = image.size
+    if w == h:
+        return image, copy.deepcopy(skeletons)
+
+    side = max(w, h)
+    stretched = image.resize((side, side), Image.BICUBIC)
+    scale_x = side / w
+    scale_y = side / h
+
+    new_skeletons = []
+    for skel in skeletons:
+        new_skel = copy.deepcopy(skel)
+        new_skel["points"] = _transform_keypoints(
+            skel["points"], lambda x, y: (x * scale_x, y * scale_y)
+        )
+        if "bboxPad" in new_skel:
+            pad = new_skel["bboxPad"]
+            for k in ("left", "right"):
+                pad[k] = pad.get(k, 0) * scale_x
+            for k in ("top", "bottom"):
+                pad[k] = pad.get(k, 0) * scale_y
+        new_skeletons.append(new_skel)
+
+    return stretched, new_skeletons
+
+
+def resize_longest_side(image, skeletons, target_size):
+    """Resize image so the longest side equals target_size. Preserves aspect ratio."""
+    w, h = image.size
+    longest = max(w, h)
+    if longest <= target_size:
+        return image, copy.deepcopy(skeletons)
+
+    scale = target_size / longest
+    new_w = round(w * scale)
+    new_h = round(h * scale)
+    resized = image.resize((new_w, new_h), Image.BICUBIC)
+
+    new_skeletons = []
+    for skel in skeletons:
+        new_skel = copy.deepcopy(skel)
+        new_skel["points"] = _transform_keypoints(
+            skel["points"], lambda x, y: (x * scale, y * scale)
+        )
+        if "bboxPad" in new_skel:
+            pad = new_skel["bboxPad"]
+            for k in ("left", "right", "top", "bottom"):
+                pad[k] = pad.get(k, 0) * scale
+        new_skeletons.append(new_skel)
+
+    return resized, new_skeletons
+
+
+def apply_shape_transform(image, skeletons, shape_mode, resize_mode, resize_size):
+    """Apply shape transform and optional resize to an image + skeletons.
+
+    Args:
+        image: PIL Image
+        skeletons: list of skeleton dicts
+        shape_mode: "crop_square" | "pad_square" | "stretch_square" | "as_is"
+        resize_mode: "as_is" | "custom"
+        resize_size: int, target longest-side size (used when resize_mode="custom")
+
+    Returns:
+        (transformed_image, transformed_skeletons)
+    """
+    # Step 1: shape transform
+    if shape_mode == "crop_square":
+        image, skeletons = shape_crop_to_square(image, skeletons)
+    elif shape_mode == "pad_square":
+        image, skeletons = shape_pad_to_square(image, skeletons)
+    elif shape_mode == "stretch_square":
+        image, skeletons = shape_stretch_to_square(image, skeletons)
+    # "as_is" — do nothing
+
+    # Step 2: resize by longest side
+    if resize_mode == "custom" and resize_size and resize_size > 0:
+        image, skeletons = resize_longest_side(image, skeletons, resize_size)
+
+    return image, skeletons
+
+
 _AUGMENTATIONS = {
     "flip": augment_horizontal_flip,
     "rotate": augment_rotation,

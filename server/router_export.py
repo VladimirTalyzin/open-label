@@ -15,7 +15,7 @@ from PIL import Image
 
 from utility import join_path
 from helpers import get_script_directory, require_user, user_can_access_project
-from augmentation import apply_mask_blur, generate_augmented
+from augmentation import apply_mask_blur, generate_augmented, apply_shape_transform
 
 router = APIRouter()
 
@@ -374,6 +374,9 @@ async def export_dataset(
     aug_rotate: bool = Query(True),
     aug_brightness: bool = Query(True),
     aug_crop: bool = Query(True),
+    shape_mode: str = Query("as_is"),
+    resize_mode: str = Query("as_is"),
+    resize_size: int = Query(1280),
 ):
     user = require_user(request)
     if not user_can_access_project(user, id_project):
@@ -421,6 +424,11 @@ async def export_dataset(
                     image = _process_image(project_path, image_name)
                 except Exception:
                     continue
+
+                # Apply shape transform (crop/pad/stretch to square) + resize
+                image, skeletons = apply_shape_transform(
+                    image, skeletons, shape_mode, resize_mode, resize_size
+                )
 
                 img_w, img_h = image.size
 

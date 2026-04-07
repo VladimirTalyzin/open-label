@@ -105,7 +105,7 @@ def _compute_bbox(points, bbox_pad, img_width, img_height):
 # --- Format Generators ---
 
 
-def _generate_coco(entries, skeleton_template, output_dir, split_name):
+def _generate_coco(entries, skeleton_template, output_dir, split_name, supercategory="object"):
     """Generate COCO Keypoints JSON files, one per category label."""
     keypoint_names = [p["name"] for p in skeleton_template.get("points", [])]
     connections = skeleton_template.get("connections", [])
@@ -184,7 +184,7 @@ def _generate_coco(entries, skeleton_template, output_dir, split_name):
             "categories": [{
                 "id": 1,
                 "name": label,
-                "supercategory": "object",
+                "supercategory": supercategory,
                 "keypoints": keypoint_names,
                 "skeleton": connections,
             }],
@@ -400,6 +400,8 @@ async def export_dataset(
 
     project_path, settings = _load_project(id_project)
     skeleton_template = settings.get("skeleton_template", {"points": [], "connections": []})
+    default_class = skeleton_template.get("skeleton_class", "") or "object"
+    default_superclass = skeleton_template.get("skeleton_superclass", "") or "object"
     annotated = _collect_annotated_images(project_path, settings)
 
     if not annotated:
@@ -501,6 +503,9 @@ async def export_dataset(
             for entry in all_entries:
                 for skel in entry["skeletons"]:
                     label = skel.get("label", "object")
+                    if label == "object":
+                        label = default_class
+                        skel["label"] = label
                     if label not in labels_map:
                         labels_map[label] = label_idx
                         label_idx += 1
@@ -518,7 +523,7 @@ async def export_dataset(
                     continue
 
                 if format == "coco":
-                    _generate_coco(split_entries, skeleton_template, format_dir, split_name)
+                    _generate_coco(split_entries, skeleton_template, format_dir, split_name, default_superclass)
                 elif format == "dlc":
                     _generate_dlc(split_entries, skeleton_template, format_dir, split_name)
                 elif format == "yolo":

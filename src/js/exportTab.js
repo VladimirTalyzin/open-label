@@ -5,7 +5,8 @@ export function createExportTab(project)
     const li = document.createElement("li")
     li.classList.add("nav-item")
 
-    const isVisible = (project.project_type || "segmentation") === "yolo-skeleton" && project.annotated_count > 0
+    const type = project.project_type || "segmentation"
+    const isVisible = (type === "yolo-skeleton" && project.annotated_count > 0) || type === "segmentation"
     li.style.display = isVisible ? "" : "none"
 
     const button = document.createElement("a")
@@ -99,6 +100,7 @@ function buildFormatSection()
 
     let selectedFormat = "yolo"
     const radios = []
+    const changeCallbacks = []
 
     for (const fmt of formats)
     {
@@ -112,6 +114,15 @@ function buildFormatSection()
         radio.value = fmt.value
         radio.id = `fmt-${fmt.value}`
         radio.checked = fmt.value === "yolo"
+
+        radio.addEventListener("change", () =>
+        {
+            if (radio.checked)
+            {
+                selectedFormat = radio.value
+                for (const cb of changeCallbacks) cb(selectedFormat)
+            }
+        })
 
         const label = document.createElement("label")
         label.classList.add("form-check-label")
@@ -139,14 +150,8 @@ function buildFormatSection()
     return {
         element: card,
         radios,
-        getFormat: () =>
-        {
-            for (const r of radios)
-            {
-                if (r.checked) return r.value
-            }
-            return "yolo"
-        }
+        getFormat: () => selectedFormat,
+        onChange: (cb) => changeCallbacks.push(cb),
     }
 }
 
@@ -315,16 +320,22 @@ function buildSplitSection(initialFormat)
     const val = makeRow("Validation", 20, "split-val")
     const test = makeRow("Test", 10, "split-test")
 
-    test.row.style.display = initialFormat === "yolo" ? "flex" : "none"
+    if (initialFormat !== "yolo")
+    {
+        test.row.classList.remove("d-flex")
+        test.row.style.display = "none"
+    }
 
     const validationMsg = document.createElement("div")
     validationMsg.style.cssText = "margin-top:4px;font-size:0.85rem;"
+
+    const isTestVisible = () => test.row.classList.contains("d-flex")
 
     const updateValidation = () =>
     {
         const t = parseInt(train.slider.value)
         const v = parseInt(val.slider.value)
-        const te = test.row.style.display !== "none" ? parseInt(test.slider.value) : 0
+        const te = isTestVisible() ? parseInt(test.slider.value) : 0
         const sum = t + v + te
 
         if (sum === 100)
@@ -356,7 +367,8 @@ function buildSplitSection(initialFormat)
         {
             if (fmt === "yolo")
             {
-                test.row.style.display = "flex"
+                test.row.classList.add("d-flex")
+                test.row.style.display = ""
                 train.slider.value = "70"
                 train.valueSpan.textContent = "70%"
                 val.slider.value = "20"
@@ -366,6 +378,7 @@ function buildSplitSection(initialFormat)
             }
             else
             {
+                test.row.classList.remove("d-flex")
                 test.row.style.display = "none"
                 train.slider.value = "80"
                 train.valueSpan.textContent = "80%"
@@ -378,7 +391,7 @@ function buildSplitSection(initialFormat)
         {
             const t = parseInt(train.slider.value)
             const v = parseInt(val.slider.value)
-            const te = test.row.style.display !== "none" ? parseInt(test.slider.value) : 0
+            const te = isTestVisible() ? parseInt(test.slider.value) : 0
             return {train: t, val: v, test: te}
         },
         isValid: () =>
@@ -386,7 +399,7 @@ function buildSplitSection(initialFormat)
             const {train: t, val: v, test: te} = {
                 train: parseInt(train.slider.value),
                 val: parseInt(val.slider.value),
-                test: test.row.style.display !== "none" ? parseInt(test.slider.value) : 0,
+                test: isTestVisible() ? parseInt(test.slider.value) : 0,
             }
             return (t + v + te) === 100
         },
@@ -1020,6 +1033,15 @@ export function initExportTabHandler(exportButton, exportDiv, showContent, proje
             heading.classList.add("mb-3")
             exportDiv.appendChild(heading)
 
+            if ((project.project_type || "segmentation") !== "yolo-skeleton")
+            {
+                const placeholder = document.createElement("div")
+                placeholder.classList.add("alert", "alert-info", "mt-3")
+                placeholder.innerHTML = "<strong>Segmentation export</strong> — this feature will be added in a future update."
+                exportDiv.appendChild(placeholder)
+                return
+            }
+
             const formatSection = buildFormatSection()
             exportDiv.appendChild(formatSection.element)
 
@@ -1039,14 +1061,11 @@ export function initExportTabHandler(exportButton, exportDiv, showContent, proje
             exportDiv.appendChild(trainingSection.element)
 
             // Update split and training defaults when format changes
-            for (const radio of formatSection.radios)
+            formatSection.onChange((fmt) =>
             {
-                radio.addEventListener("change", () =>
-                {
-                    splitSection.setFormat(formatSection.getFormat())
-                    trainingSection.updateDefaults()
-                })
-            }
+                splitSection.setFormat(fmt)
+                trainingSection.updateDefaults()
+            })
 
             // Export button
             const exportBtn = document.createElement("button")

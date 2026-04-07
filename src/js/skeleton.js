@@ -101,6 +101,8 @@ export function renderSkeletonEditor(container, skeletonData, onSave)
 
     let points = skeletonData && skeletonData.points ? skeletonData.points.map(p => ({name: p.name || "", x: p.x, y: p.y})) : []
     let connections = skeletonData && skeletonData.connections ? skeletonData.connections.map(c => [...c]) : []
+    let skeletonClass = skeletonData && skeletonData.skeleton_class ? skeletonData.skeleton_class : ""
+    let skeletonSuperclass = skeletonData && skeletonData.skeleton_superclass ? skeletonData.skeleton_superclass : ""
     let mode = "add_point"
     let connectFirstIdx = null
     let draggingIdx = null
@@ -182,7 +184,7 @@ export function renderSkeletonEditor(container, skeletonData, onSave)
         {
             clearTimeout(saveTimer)
         }
-        saveTimer = setTimeout(() => onSave({points, connections}), 600)
+        saveTimer = setTimeout(() => onSave({points, connections, skeleton_class: skeletonClass, skeleton_superclass: skeletonSuperclass}), 600)
     }
 
     function commitAction()
@@ -281,6 +283,36 @@ export function renderSkeletonEditor(container, skeletonData, onSave)
     rightPanel.style.maxWidth = "280px"
     rightPanel.style.maxHeight = (canvasH + 40) + "px"
     rightPanel.style.overflowY = "auto"
+
+    // --- Class / Superclass fields ---
+    const classTitle = document.createElement("h6")
+    classTitle.textContent = "Class"
+    classTitle.classList.add("mb-2")
+    rightPanel.appendChild(classTitle)
+
+    const classInput = document.createElement("input")
+    classInput.type = "text"
+    classInput.classList.add("form-control", "form-control-sm", "mb-2")
+    classInput.placeholder = "Class name (e.g. person)"
+    classInput.value = skeletonClass
+    classInput.addEventListener("input", () =>
+    {
+        skeletonClass = classInput.value.trim()
+        debouncedSave()
+    })
+    rightPanel.appendChild(classInput)
+
+    const superclassInput = document.createElement("input")
+    superclassInput.type = "text"
+    superclassInput.classList.add("form-control", "form-control-sm", "mb-3")
+    superclassInput.placeholder = "Superclass (optional)"
+    superclassInput.value = skeletonSuperclass
+    superclassInput.addEventListener("input", () =>
+    {
+        skeletonSuperclass = superclassInput.value.trim()
+        debouncedSave()
+    })
+    rightPanel.appendChild(superclassInput)
 
     const title = document.createElement("h6")
     title.textContent = "Keypoints"
@@ -732,7 +764,7 @@ export function renderSkeletonEditor(container, skeletonData, onSave)
             canvasContainer.style.display = "none"
             rightPanel.style.display = "none"
             textArea.style.display = "block"
-            textArea.value = JSON.stringify({points, connections}, null, 2)
+            textArea.value = JSON.stringify({points, connections, skeleton_class: skeletonClass, skeleton_superclass: skeletonSuperclass}, null, 2)
             textToggleBtn.textContent = "\u25A3 Graphic"
             textToggleBtn.classList.replace("btn-outline-secondary", "btn-outline-primary")
             for (const [, b] of Object.entries(toolBtns))
@@ -757,6 +789,8 @@ export function renderSkeletonEditor(container, skeletonData, onSave)
                     {
                         connections = data.connections.map(c => [...c])
                     }
+                    if (data.skeleton_class !== undefined) { skeletonClass = data.skeleton_class || ""; classInput.value = skeletonClass }
+                    if (data.skeleton_superclass !== undefined) { skeletonSuperclass = data.skeleton_superclass || ""; superclassInput.value = skeletonSuperclass }
                     commitAction()
                 }
             }
@@ -801,7 +835,9 @@ export function renderSkeletonEditor(container, skeletonData, onSave)
                     {
                         points = data.points.map(p => ({name: p.name || "", x: p.x, y: p.y}))
                         connections = data.connections.map(c => [...c])
-                        onSave({points, connections})
+                        if (data.skeleton_class !== undefined) { skeletonClass = data.skeleton_class || "" }
+                        if (data.skeleton_superclass !== undefined) { skeletonSuperclass = data.skeleton_superclass || "" }
+                        onSave({points, connections, skeleton_class: skeletonClass, skeleton_superclass: skeletonSuperclass})
                     }
                 }
                 catch (e)

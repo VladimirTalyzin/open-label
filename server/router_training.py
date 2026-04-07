@@ -44,6 +44,23 @@ def _pip_extras(device):
     return ""
 
 
+def _detect_swap(name, all_names):
+    """Detect symmetric counterpart for L/R keypoint names."""
+    pairs = [
+        ('_L', '_R'), ('_R', '_L'),
+        ('_l', '_r'), ('_r', '_l'),
+        ('_Left', '_Right'), ('_Right', '_Left'),
+        ('_left', '_right'), ('_right', '_left'),
+        ('Left', 'Right'), ('Right', 'Left'),
+    ]
+    for suffix, replacement in pairs:
+        if name.endswith(suffix):
+            swap_name = name[:-len(suffix)] + replacement
+            if swap_name in all_names:
+                return swap_name
+    return ''
+
+
 def generate_yolo_script(params):
     """Generate a YOLOv8-pose training script."""
     device = params.get("device", "cpu")
@@ -132,7 +149,7 @@ if __name__ == "__main__":
     print("[3/3] Running inference demo...")
 
     import matplotlib
-    matplotlib.use("TkAgg")
+    matplotlib.use("Agg")
     import matplotlib.pyplot as plt
     import matplotlib.patches as patches
     from PIL import Image
@@ -221,33 +238,22 @@ if __name__ == "__main__":
     output_path = "inference_result.png"
     plt.savefig(output_path, dpi=150, bbox_inches="tight")
     print(f"  Result saved to: {{output_path}}")
-    plt.show()
+    print("  (Open the saved image to view the result)")
     print()
     print("Done!")
 '''
     return script
 
 
-def _inference_demo_block(keypoint_names, skeleton):
-    """Shared matplotlib inference visualization block for COCO-based scripts."""
-    return f'''
-    # --- Inference demo ---
-    print()
-    print("[3/3] Inference demo...")
+def _visualization_block(keypoint_names, skeleton):
+    """Matplotlib visualization block (plot only).
 
-    import matplotlib
-    matplotlib.use("TkAgg")
-    import matplotlib.pyplot as plt
-
-    demo_dir = val_img_dir if os.path.exists(val_img_dir) else train_img_dir
-    demo_images = [f for f in os.listdir(demo_dir) if f.lower().endswith((".png", ".jpg", ".jpeg"))]
-
-    if demo_images:
-        demo_path = os.path.join(demo_dir, demo_images[0])
-        demo_img = Image.open(demo_path).convert("RGB")
-        orig_w, orig_h = demo_img.size
-
-        fig, axes = plt.subplots(1, 2, figsize=(16, 8))
+    Assumes these variables are already set in the calling scope:
+      demo_img, pred_kpts (NUM_KPTS, 3), NUM_KPTS, KEYPOINT_NAMES,
+      SKELETON, plt, np.
+    Must be placed inside an ``if demo_images:`` guard at 8-space indent.
+    """
+    return f'''        fig, axes = plt.subplots(1, 2, figsize=(16, 8))
         axes[0].imshow(demo_img)
         axes[0].set_title("Original")
         axes[0].axis("off")
@@ -258,7 +264,6 @@ def _inference_demo_block(keypoint_names, skeleton):
 
         COLORS = plt.cm.tab20(np.linspace(0, 1, max(NUM_KPTS, 1)))
 
-        # pred_kpts should be set before this block: shape (NUM_KPTS, 3) with pixel coords
         for conn in SKELETON:
             if len(conn) >= 2:
                 i1, i2 = conn[0], conn[1]
@@ -287,10 +292,9 @@ def _inference_demo_block(keypoint_names, skeleton):
         plt.tight_layout()
         plt.savefig("inference_result.png", dpi=150, bbox_inches="tight")
         print(f"  Result saved to: inference_result.png")
-        plt.show()
+        print("  (Open the saved image to view the result)")
 
-    print("Done!")
-'''
+    print("Done!")'''
 
 
 def generate_coco_mmpose_script(params):
@@ -305,22 +309,55 @@ def generate_coco_mmpose_script(params):
     category_file = params.get("category_file", "train/object.json")
     num_kpts = len(keypoint_names)
 
-    device_val = _device_arg(device)
+    heatmap_size = imgsz // 4  # HRNet stride = 4
 
-    # Build skeleton links as list of dicts for MMPose config
+    # Build skeleton links with integer keys (dict, not set)
     skeleton_links = []
     for i, conn in enumerate(skeleton):
         if len(conn) >= 2 and conn[0] < num_kpts and conn[1] < num_kpts:
             skeleton_links.append(
-                f"        dict(link=({repr(keypoint_names[conn[0]])}, {repr(keypoint_names[conn[1]])}), "
+                f"            {i}: dict(link=({repr(keypoint_names[conn[0]])}, {repr(keypoint_names[conn[1]])}), "
                 f"id={i}, color=[0, 255, 0]),"
             )
     skeleton_links_str = "\n".join(skeleton_links)
 
+    # Build keypoint info with swap for symmetric L/R pairs
     kpt_info = []
     for i, name in enumerate(keypoint_names):
-        kpt_info.append(f"        dict(name={repr(name)}, id={i}, color=[255, 128, 0], type='', swap=''),")
+        swap = _detect_swap(name, keypoint_names)
+        kpt_info.append(
+            f"            {i}: dict(name={repr(name)}, id={i}, color=[255, 128, 0], "
+            f"type='', swap={repr(swap)}),"
+        )
     kpt_info_str = "\n".join(kpt_info)
+
+    # joint_weights and sigmas — required by MMPose metainfo
+    joint_weights_str = repr([1.0] * num_kpts)
+    sigmas_str = repr([0.05] * num_kpts)
+
+    # MPS float64 workaround (#6)
+    mps_block = ""
+    if device == "mps":
+        mps_block = '''
+    # --- MPS float64 workaround ---
+    # MMPose uses float64 in accuracy computation which MPS doesn't support.
+    # Force CPU to avoid: "TypeError: Cannot convert a MPS Tensor to float64"
+    import torch
+    torch.backends.mps.is_available = lambda: False
+    print("  Note: MPS disabled (float64 incompatibility), using CPU instead.")
+'''
+
+    # Memory warning for large configs (#7)
+    mem_warning = ""
+    est_gb = (batch_size * (imgsz ** 2) * 3 * 4) / (1024 ** 3) * 15
+    if est_gb > 16:
+        mem_warning = f'''
+    # --- Memory warning ---
+    print("  WARNING: Estimated memory usage ~{est_gb:.0f} GB.")
+    print("  If training crashes (OOM), reduce batch_size or imgsz.")
+    print("  Recommended for Mac (24 GB): imgsz=384, batch_size=8")
+    print()
+'''
 
     script = f'''#!/usr/bin/env python3
 """
@@ -335,10 +372,18 @@ import subprocess
 import sys
 
 def install_packages():
+    # Pin setuptools to avoid pkg_resources removal (setuptools >= 78)
+    subprocess.check_call([sys.executable, "-m", "pip", "install", "-q",
+                           "setuptools>=67,<78"])
+    # Cython required to build xtcocotools (mmpose dependency)
+    subprocess.check_call([sys.executable, "-m", "pip", "install", "-q", "Cython"])
+
     packages = [
         "torch", "torchvision",
-        "mmengine", "mmcv>=2.0.0",
-        "mmdet>=3.0.0", "mmpose>=1.0.0",
+        "mmengine",
+        "mmcv>=2.0.0,<2.2.0",    # mmdet requires mmcv < 2.2.0
+        "mmdet>=3.0.0",
+        "mmpose>=1.0.0",
         "matplotlib", "Pillow", "numpy",
     ]
     for pkg in packages:
@@ -355,6 +400,16 @@ if __name__ == "__main__":
 
     print("[1/3] Installing dependencies...")
     install_packages()
+{mps_block}
+    # --- PyTorch 2.6+ compatibility (#8) ---
+    # mmengine checkpoints contain numpy objects; torch.load now defaults to
+    # weights_only=True which rejects them.
+    import torch
+    _orig_torch_load = torch.load
+    def _patched_torch_load(*args, **kwargs):
+        kwargs.setdefault("weights_only", False)
+        return _orig_torch_load(*args, **kwargs)
+    torch.load = _patched_torch_load
 
     import os
     import json
@@ -376,7 +431,7 @@ if __name__ == "__main__":
     print(f"  Image size: {imgsz}")
     print(f"  LR:         {lr}")
     print()
-
+{mem_warning}
     cat_file = "{category_file}"
     train_json = os.path.abspath(cat_file)
     val_json = os.path.abspath(cat_file.replace("train/", "val/"))
@@ -385,6 +440,8 @@ if __name__ == "__main__":
 
     dataset_info = dict(
         dataset_name="openlabel",
+        joint_weights={joint_weights_str},
+        sigmas={sigmas_str},
         keypoint_info={{
 {kpt_info_str}
         }},
@@ -392,6 +449,14 @@ if __name__ == "__main__":
 {skeleton_links_str}
         }},
     )
+
+    # Shared val/test pipeline
+    val_pipeline = [
+        dict(type="LoadImage"),
+        dict(type="GetBBoxCenterScale"),
+        dict(type="TopdownAffine", input_size=({imgsz}, {imgsz})),
+        dict(type="PackPoseInputs"),
+    ]
 
     cfg_dict = dict(
         default_scope="mmpose",
@@ -418,8 +483,10 @@ if __name__ == "__main__":
                 type="HeatmapHead",
                 in_channels=48,
                 out_channels={num_kpts},
+                deconv_out_channels=[],     # HRNet already outputs stride-4 features (#5)
+                deconv_kernel_sizes=[],     # no extra upsampling needed
                 loss=dict(type="KeypointMSELoss", use_target_weight=True),
-                decoder=dict(type="MSRAHeatmap", input_size=({imgsz}, {imgsz}), heatmap_size=({imgsz // 4}, {imgsz // 4}), sigma=2),
+                decoder=dict(type="MSRAHeatmap", input_size=({imgsz}, {imgsz}), heatmap_size=({heatmap_size}, {heatmap_size}), sigma=2),
             ),
         ),
         train_dataloader=dict(
@@ -435,7 +502,7 @@ if __name__ == "__main__":
                     dict(type="LoadImage"),
                     dict(type="GetBBoxCenterScale"),
                     dict(type="TopdownAffine", input_size=({imgsz}, {imgsz})),
-                    dict(type="GenerateTarget", encoder=dict(type="MSRAHeatmap", input_size=({imgsz}, {imgsz}), heatmap_size=({imgsz // 4}, {imgsz // 4}), sigma=2)),
+                    dict(type="GenerateTarget", encoder=dict(type="MSRAHeatmap", input_size=({imgsz}, {imgsz}), heatmap_size=({heatmap_size}, {heatmap_size}), sigma=2)),
                     dict(type="PackPoseInputs"),
                 ],
             ),
@@ -449,17 +516,26 @@ if __name__ == "__main__":
                 ann_file=val_json,
                 data_prefix=dict(img="val/images"),
                 metainfo=dataset_info,
-                pipeline=[
-                    dict(type="LoadImage"),
-                    dict(type="GetBBoxCenterScale"),
-                    dict(type="TopdownAffine", input_size=({imgsz}, {imgsz})),
-                    dict(type="PackPoseInputs"),
-                ],
+                pipeline=val_pipeline,
+            ),
+        ),
+        test_dataloader=dict(
+            batch_size=1,
+            num_workers=2,
+            dataset=dict(
+                type="CocoDataset",
+                data_root=".",
+                ann_file=val_json,
+                data_prefix=dict(img="val/images"),
+                metainfo=dataset_info,
+                pipeline=val_pipeline,
             ),
         ),
         val_evaluator=dict(type="CocoMetric", ann_file=val_json),
+        test_evaluator=dict(type="CocoMetric", ann_file=val_json),
         train_cfg=dict(by_epoch=True, max_epochs={epochs}, val_interval=10),
         val_cfg=dict(),
+        test_cfg=dict(),
         optim_wrapper=dict(optimizer=dict(type="Adam", lr={lr})),
         default_hooks=dict(
             checkpoint=dict(type="CheckpointHook", interval=10, save_best="coco/AP", rule="greater"),
@@ -480,7 +556,7 @@ if __name__ == "__main__":
     print("[3/3] Inference demo...")
 
     import matplotlib
-    matplotlib.use("TkAgg")
+    matplotlib.use("Agg")
     import matplotlib.pyplot as plt
     from mmpose.apis import init_model, inference_topdown
     from mmpose.structures import merge_data_samples
@@ -506,20 +582,17 @@ if __name__ == "__main__":
         demo_img = Image.open(demo_path).convert("RGB")
         orig_w, orig_h = demo_img.size
 
-        # Use the full image as bbox
         bboxes = [[0, 0, orig_w, orig_h]]
 
-        pose_model = init_model(cfg, ckpt_path, device="{device_val}")
+        pose_model = init_model(cfg, ckpt_path, device="cpu")
         results = inference_topdown(pose_model, demo_path, bboxes)
         result = merge_data_samples(results)
 
-        pred_kpts = result.pred_instances.keypoints[0]  # (NUM_KPTS, 2)
-        pred_scores = result.pred_instances.keypoint_scores[0]  # (NUM_KPTS,)
-
-        # Combine into (NUM_KPTS, 3)
+        pred_kpts = result.pred_instances.keypoints[0]
+        pred_scores = result.pred_instances.keypoint_scores[0]
         pred_kpts = np.column_stack([pred_kpts, pred_scores])
 
-{_inference_demo_block(keypoint_names, skeleton)}
+{_visualization_block(keypoint_names, skeleton)}
 '''
     return script
 
@@ -536,21 +609,51 @@ def generate_coco_vitpose_script(params):
     category_file = params.get("category_file", "train/object.json")
     num_kpts = len(keypoint_names)
 
-    device_val = _device_arg(device)
+    heatmap_size = imgsz // 4
 
+    # Build keypoint info with swap for symmetric L/R pairs
     kpt_info = []
     for i, name in enumerate(keypoint_names):
-        kpt_info.append(f"        dict(name={repr(name)}, id={i}, color=[255, 128, 0], type='', swap=''),")
+        swap = _detect_swap(name, keypoint_names)
+        kpt_info.append(
+            f"            {i}: dict(name={repr(name)}, id={i}, color=[255, 128, 0], "
+            f"type='', swap={repr(swap)}),"
+        )
     kpt_info_str = "\n".join(kpt_info)
 
+    # Build skeleton links with integer keys (dict, not set)
     skeleton_links = []
     for i, conn in enumerate(skeleton):
         if len(conn) >= 2 and conn[0] < num_kpts and conn[1] < num_kpts:
             skeleton_links.append(
-                f"        dict(link=({repr(keypoint_names[conn[0]])}, {repr(keypoint_names[conn[1]])}), "
+                f"            {i}: dict(link=({repr(keypoint_names[conn[0]])}, {repr(keypoint_names[conn[1]])}), "
                 f"id={i}, color=[0, 255, 0]),"
             )
     skeleton_links_str = "\n".join(skeleton_links)
+
+    # joint_weights and sigmas — required by MMPose metainfo
+    joint_weights_str = repr([1.0] * num_kpts)
+    sigmas_str = repr([0.05] * num_kpts)
+
+    # MPS float64 workaround
+    mps_block = ""
+    if device == "mps":
+        mps_block = '''
+    # --- MPS float64 workaround ---
+    import torch
+    torch.backends.mps.is_available = lambda: False
+    print("  Note: MPS disabled (float64 incompatibility), using CPU instead.")
+'''
+
+    # Memory warning
+    mem_warning = ""
+    est_gb = (batch_size * (imgsz ** 2) * 3 * 4) / (1024 ** 3) * 15
+    if est_gb > 16:
+        mem_warning = f'''
+    print("  WARNING: Estimated memory usage ~{est_gb:.0f} GB.")
+    print("  If training crashes (OOM), reduce batch_size or imgsz.")
+    print()
+'''
 
     script = f'''#!/usr/bin/env python3
 """
@@ -566,10 +669,18 @@ import subprocess
 import sys
 
 def install_packages():
+    # Pin setuptools to avoid pkg_resources removal (setuptools >= 78)
+    subprocess.check_call([sys.executable, "-m", "pip", "install", "-q",
+                           "setuptools>=67,<78"])
+    # Cython required to build xtcocotools (mmpose dependency)
+    subprocess.check_call([sys.executable, "-m", "pip", "install", "-q", "Cython"])
+
     packages = [
         "torch", "torchvision",
-        "mmengine", "mmcv>=2.0.0",
-        "mmdet>=3.0.0", "mmpose>=1.0.0",
+        "mmengine",
+        "mmcv>=2.0.0,<2.2.0",
+        "mmdet>=3.0.0",
+        "mmpose>=1.0.0",
         "timm",
         "matplotlib", "Pillow", "numpy",
     ]
@@ -587,6 +698,14 @@ if __name__ == "__main__":
 
     print("[1/3] Installing dependencies...")
     install_packages()
+{mps_block}
+    # --- PyTorch 2.6+ compatibility ---
+    import torch
+    _orig_torch_load = torch.load
+    def _patched_torch_load(*args, **kwargs):
+        kwargs.setdefault("weights_only", False)
+        return _orig_torch_load(*args, **kwargs)
+    torch.load = _patched_torch_load
 
     import os
     import json
@@ -607,7 +726,7 @@ if __name__ == "__main__":
     print(f"  Image size: {imgsz}")
     print(f"  LR:         {lr}")
     print()
-
+{mem_warning}
     cat_file = "{category_file}"
     train_json = os.path.abspath(cat_file)
     val_json = os.path.abspath(cat_file.replace("train/", "val/"))
@@ -616,6 +735,8 @@ if __name__ == "__main__":
 
     dataset_info = dict(
         dataset_name="openlabel",
+        joint_weights={joint_weights_str},
+        sigmas={sigmas_str},
         keypoint_info={{
 {kpt_info_str}
         }},
@@ -623,6 +744,14 @@ if __name__ == "__main__":
 {skeleton_links_str}
         }},
     )
+
+    # Shared val/test pipeline
+    val_pipeline = [
+        dict(type="LoadImage"),
+        dict(type="GetBBoxCenterScale"),
+        dict(type="TopdownAffine", input_size=({imgsz}, {imgsz})),
+        dict(type="PackPoseInputs"),
+    ]
 
     cfg_dict = dict(
         default_scope="mmpose",
@@ -656,7 +785,7 @@ if __name__ == "__main__":
                 deconv_out_channels=(256, 256),
                 deconv_kernel_sizes=(4, 4),
                 loss=dict(type="KeypointMSELoss", use_target_weight=True),
-                decoder=dict(type="MSRAHeatmap", input_size=({imgsz}, {imgsz}), heatmap_size=({imgsz // 4}, {imgsz // 4}), sigma=2),
+                decoder=dict(type="MSRAHeatmap", input_size=({imgsz}, {imgsz}), heatmap_size=({heatmap_size}, {heatmap_size}), sigma=2),
             ),
         ),
         train_dataloader=dict(
@@ -672,7 +801,7 @@ if __name__ == "__main__":
                     dict(type="LoadImage"),
                     dict(type="GetBBoxCenterScale"),
                     dict(type="TopdownAffine", input_size=({imgsz}, {imgsz})),
-                    dict(type="GenerateTarget", encoder=dict(type="MSRAHeatmap", input_size=({imgsz}, {imgsz}), heatmap_size=({imgsz // 4}, {imgsz // 4}), sigma=2)),
+                    dict(type="GenerateTarget", encoder=dict(type="MSRAHeatmap", input_size=({imgsz}, {imgsz}), heatmap_size=({heatmap_size}, {heatmap_size}), sigma=2)),
                     dict(type="PackPoseInputs"),
                 ],
             ),
@@ -686,17 +815,26 @@ if __name__ == "__main__":
                 ann_file=val_json,
                 data_prefix=dict(img="val/images"),
                 metainfo=dataset_info,
-                pipeline=[
-                    dict(type="LoadImage"),
-                    dict(type="GetBBoxCenterScale"),
-                    dict(type="TopdownAffine", input_size=({imgsz}, {imgsz})),
-                    dict(type="PackPoseInputs"),
-                ],
+                pipeline=val_pipeline,
+            ),
+        ),
+        test_dataloader=dict(
+            batch_size=1,
+            num_workers=2,
+            dataset=dict(
+                type="CocoDataset",
+                data_root=".",
+                ann_file=val_json,
+                data_prefix=dict(img="val/images"),
+                metainfo=dataset_info,
+                pipeline=val_pipeline,
             ),
         ),
         val_evaluator=dict(type="CocoMetric", ann_file=val_json),
+        test_evaluator=dict(type="CocoMetric", ann_file=val_json),
         train_cfg=dict(by_epoch=True, max_epochs={epochs}, val_interval=10),
         val_cfg=dict(),
+        test_cfg=dict(),
         optim_wrapper=dict(
             optimizer=dict(type="AdamW", lr={lr}, weight_decay=0.1),
             paramwise_cfg=dict(
@@ -724,7 +862,7 @@ if __name__ == "__main__":
     print("[3/3] Inference demo...")
 
     import matplotlib
-    matplotlib.use("TkAgg")
+    matplotlib.use("Agg")
     import matplotlib.pyplot as plt
     from mmpose.apis import init_model, inference_topdown
     from mmpose.structures import merge_data_samples
@@ -751,7 +889,7 @@ if __name__ == "__main__":
 
         bboxes = [[0, 0, orig_w, orig_h]]
 
-        pose_model = init_model(cfg, ckpt_path, device="{device_val}")
+        pose_model = init_model(cfg, ckpt_path, device="cpu")
         results = inference_topdown(pose_model, demo_path, bboxes)
         result = merge_data_samples(results)
 
@@ -759,7 +897,7 @@ if __name__ == "__main__":
         pred_scores = result.pred_instances.keypoint_scores[0]
         pred_kpts = np.column_stack([pred_kpts, pred_scores])
 
-{_inference_demo_block(keypoint_names, skeleton)}
+{_visualization_block(keypoint_names, skeleton)}
 '''
     return script
 
@@ -933,7 +1071,7 @@ if __name__ == "__main__":
     print("[3/3] Inference demo...")
 
     import matplotlib
-    matplotlib.use("TkAgg")
+    matplotlib.use("Agg")
     import matplotlib.pyplot as plt
 
     model.load_state_dict(torch.load("best_model.pth", map_location=DEVICE))
@@ -962,7 +1100,7 @@ if __name__ == "__main__":
         for i in range(NUM_KPTS):
             pred_kpts[i] = [pred[i][0] * orig_w, pred[i][1] * orig_h, pred[i][2]]
 
-{_inference_demo_block(keypoint_names, skeleton)}
+{_visualization_block(keypoint_names, skeleton)}
 '''
     return script
 
@@ -1005,7 +1143,7 @@ if __name__ == "__main__":
     import os
     import deeplabcut
     import matplotlib
-    matplotlib.use("TkAgg")
+    matplotlib.use("Agg")
     import matplotlib.pyplot as plt
     from PIL import Image
     import numpy as np
@@ -1063,7 +1201,7 @@ if __name__ == "__main__":
         plt.tight_layout()
         plt.savefig("inference_result.png", dpi=150, bbox_inches="tight")
         print(f"  Result saved to: inference_result.png")
-        plt.show()
+        print("  (Open the saved image to view the result)")
 
     print("Done!")
 '''

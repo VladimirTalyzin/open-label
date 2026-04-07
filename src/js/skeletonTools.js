@@ -285,8 +285,9 @@ export function setupSkeletonMode(
             return
         }
         setActiveTool("skeleton")
+        const templateClass = project.skeleton_template && project.skeleton_template.skeleton_class ? project.skeleton_template.skeleton_class : ""
         const activeLabel = imageCardDiv.getAttribute("active_label") ||
-            (project.labels && project.labels.length > 0 ? project.labels[0].label : "object")
+            (project.labels && project.labels.length > 0 ? project.labels[0].label : (templateClass || "object"))
         annotator.addSkeleton(activeLabel)
     })
 

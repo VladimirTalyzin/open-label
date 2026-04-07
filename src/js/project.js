@@ -217,7 +217,7 @@ export function updateProjects(responseJson, clear)
                         project.project_type = typeSelect.value
                         skeletonLi.style.display = typeSelect.value === "yolo-skeleton" ? "" : "none"
                         labelsLi.style.display = typeSelect.value === "yolo-skeleton" ? "none" : ""
-                        exportLi.style.display = (typeSelect.value === "yolo-skeleton" && project.annotated_count > 0) ? "" : "none"
+                        exportLi.style.display = (typeSelect.value === "yolo-skeleton" && project.annotated_count > 0) || typeSelect.value === "segmentation" ? "" : "none"
                         typeSelect.style.borderColor = "green"
                         typeSelect.style.borderWidth = "3px"
                         setTimeout(() =>

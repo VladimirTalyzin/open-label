@@ -609,7 +609,12 @@ def generate_coco_vitpose_script(params):
     category_file = params.get("category_file", "train/object.json")
     num_kpts = len(keypoint_names)
 
-    heatmap_size = imgsz // 4
+    # ViT-B uses patch_size=16; HeatmapHead has 2 deconv layers (each 2x upscale).
+    # feature_map = imgsz // 16,  heatmap = feature_map * 4 = (imgsz // 16) * 4
+    # Round imgsz down to a multiple of 16 so the patch grid divides evenly.
+    if imgsz % 16 != 0:
+        imgsz = (imgsz // 16) * 16
+    heatmap_size = (imgsz // 16) * 4
 
     # Build keypoint info with swap for symmetric L/R pairs
     kpt_info = []
@@ -645,12 +650,14 @@ def generate_coco_vitpose_script(params):
     print("  Note: MPS disabled (float64 incompatibility), using CPU instead.")
 '''
 
-    # Memory warning
+    # Memory warning — ViT attention scales O(N^2) with token count (N = (imgsz/16)^2 + 1)
     mem_warning = ""
-    est_gb = (batch_size * (imgsz ** 2) * 3 * 4) / (1024 ** 3) * 15
-    if est_gb > 16:
+    num_tokens = (imgsz // 16) ** 2 + 1
+    if imgsz > 256 or num_tokens > 257:
         mem_warning = f'''
-    print("  WARNING: Estimated memory usage ~{est_gb:.0f} GB.")
+    print("  WARNING: imgsz={imgsz} produces {num_tokens} ViT tokens.")
+    print("  ViT attention is O(N^2) — memory grows quickly above 256x256.")
+    print("  Reference ViTPose-B is trained at 256x192. Consider imgsz=256.")
     print("  If training crashes (OOM), reduce batch_size or imgsz.")
     print()
 '''
@@ -681,6 +688,7 @@ def install_packages():
         "mmcv>=2.0.0,<2.2.0",
         "mmdet>=3.0.0",
         "mmpose>=1.0.0",
+        "mmpretrain>=1.0.0",   # provides VisionTransformer backbone (mmpose has no ViT)
         "timm",
         "matplotlib", "Pillow", "numpy",
     ]
@@ -764,18 +772,20 @@ if __name__ == "__main__":
                 bgr_to_rgb=True,
             ),
             backbone=dict(
-                type="mmpose.ViT",
+                # mmpose has no ViT class — use VisionTransformer from mmpretrain.
+                # arch="base" sets the ViT-B hyperparameters internally.
+                type="mmpretrain.VisionTransformer",
+                arch="base",
                 img_size=({imgsz}, {imgsz}),
                 patch_size=16,
-                embed_dim=768,
-                depth=12,
-                num_heads=12,
-                mlp_ratio=4,
-                qkv_bias=True,
                 drop_path_rate=0.3,
+                with_cls_token=True,    # required so MAE pretrained pos_embed loads
+                out_type="featmap",     # head needs feature map, not cls token
+                out_indices=-1,
                 init_cfg=dict(
                     type="Pretrained",
-                    checkpoint="https://download.openmmlab.com/mmpose/v1/pretrained_models/vitpose-b_simcc.pth",
+                    # MAE-pretrained ViT-B; mmengine resizes pos_embed to our img_size.
+                    checkpoint="https://download.openmmlab.com/mmpose/v1/pretrained_models/mae_pretrain_vit_base.pth",
                 ),
             ),
             head=dict(

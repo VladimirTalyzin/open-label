@@ -1116,34 +1116,147 @@ if __name__ == "__main__":
 
 
 def generate_dlc_script(params):
-    """Generate a DeepLabCut training script."""
-    device = params.get("device", "cpu")
+    """Generate a DeepLabCut 3.x (PyTorch) training script."""
     epochs = params.get("epochs", 100)
     batch_size = params.get("batch_size", 8)
     keypoint_names = params.get("keypoint_names", [])
     skeleton = params.get("skeleton", [])
 
-    gpu_flag = "True" if device in ("gpu", "rocm") else "False"
+    # Skeleton: convert index pairs to bodypart-name pairs (DLC config format)
+    skeleton_pairs = []
+    for conn in skeleton:
+        if len(conn) >= 2 and conn[0] < len(keypoint_names) and conn[1] < len(keypoint_names):
+            skeleton_pairs.append([keypoint_names[conn[0]], keypoint_names[conn[1]]])
 
     script = f'''#!/usr/bin/env python3
 """
-OpenLabel — DeepLabCut Training Script
-=======================================
+OpenLabel \u2014 DeepLabCut Training Script (DLC 3.x / PyTorch)
+===========================================================
+Builds a real DLC project from the OpenLabel raw export
+(train/, val/, CollectedData_*.csv) and trains a PyTorch model.
+
     python train.py
+
+Override device with the DLC_DEVICE env var:
+    DLC_DEVICE=cuda python train.py
+    DLC_DEVICE=mps  python train.py
+    DLC_DEVICE=cpu  python train.py
 """
+from __future__ import annotations
 
 import subprocess
 import sys
 
+
 def install_packages():
-    packages = ["deeplabcut[tf]", "matplotlib", "Pillow", "numpy"]
-    for pkg in packages:
+    # DLC 3.x runs on PyTorch (no TF). Don't pull tables 3.8 / blosc2 2.0.x.
+    pkgs = [
+        "numpy<2",                      # DLC 3.0 still requires numpy < 2
+        "torch", "torchvision",
+        "deeplabcut>=3.0.0rc14,<4.0",   # PyTorch backend, no [tf] extras
+        "imageio", "imageio-ffmpeg",    # synthetic anchor video
+        "tables>=3.9",
+        "pyyaml", "pandas",
+        "matplotlib", "Pillow",
+    ]
+    for pkg in pkgs:
         subprocess.check_call([sys.executable, "-m", "pip", "install", "-q", pkg])
     print("All packages installed.")
 
+
+def autodetect_device() -> str:
+    """cuda \u2192 mps \u2192 cpu (override via DLC_DEVICE env var)."""
+    import os as _os
+    override = _os.environ.get("DLC_DEVICE", "").strip().lower()
+    if override in ("cuda", "mps", "cpu"):
+        return override
+    try:
+        import torch
+        if torch.cuda.is_available():
+            return "cuda"
+        if hasattr(torch.backends, "mps") and torch.backends.mps.is_available():
+            return "mps"
+    except Exception:
+        pass
+    return "cpu"
+
+
+def make_synthetic_video(out_path: str, frame_path: str, num_frames: int = 2) -> str:
+    """Tiny mp4 from a single frame \u2014 needed only as an anchor for create_new_project()."""
+    import imageio.v2 as imageio
+    import numpy as np
+    from PIL import Image
+    arr = np.array(Image.open(frame_path).convert("RGB"))
+    writer = imageio.get_writer(out_path, fps=1, codec="libx264")
+    for _ in range(num_frames):
+        writer.append_data(arr)
+    writer.close()
+    return out_path
+
+
+def csv_has_individuals(csv_path: str) -> bool:
+    """True iff the CSV's first cell is 'individuals' (multi-animal layout)."""
+    with open(csv_path) as f:
+        first = f.readline().split(",")[0].strip().strip('"')
+    return first.lower() == "individuals"
+
+
+def import_labeled_frames(csv_path, image_dir, labeled_dir, scorer, bodyparts, prefix):
+    """Read OpenLabel CSV, copy images into labeled_dir with a prefix to avoid
+    train/val name collisions, and return a DLC-style MultiIndex DataFrame."""
+    import os as _os
+    import shutil
+    import numpy as np
+    import pandas as pd
+
+    # OpenLabel writes 3 header rows: scorer / bodyparts / coords.
+    df_raw = pd.read_csv(csv_path, header=[0, 1, 2], index_col=0)
+
+    csv_scorer = df_raw.columns[0][0]
+    csv_bodyparts = []
+    for col in df_raw.columns:
+        if col[1] not in csv_bodyparts:
+            csv_bodyparts.append(col[1])
+
+    n_rows = len(df_raw)
+    n_bp = len(bodyparts)
+    data = np.full((n_rows, n_bp * 2), np.nan)
+
+    # Re-sort columns into the order requested by the project config (critical
+    # \u2014 if we don't, DLC trains "the wrong points").
+    for i, bp in enumerate(bodyparts):
+        if bp not in csv_bodyparts:
+            continue
+        x_col = (csv_scorer, bp, "x")
+        y_col = (csv_scorer, bp, "y")
+        if x_col in df_raw.columns:
+            data[:, i * 2]     = pd.to_numeric(df_raw[x_col], errors="coerce").values
+        if y_col in df_raw.columns:
+            data[:, i * 2 + 1] = pd.to_numeric(df_raw[y_col], errors="coerce").values
+
+    # Copy images and build deduplicated MultiIndex (labeled-data, video, file)
+    video_name = _os.path.basename(labeled_dir)
+    new_tuples = []
+    for src_path in df_raw.index:
+        basename = _os.path.basename(str(src_path))
+        new_basename = prefix + basename
+        src_full = _os.path.join(image_dir, basename)
+        dst_full = _os.path.join(labeled_dir, new_basename)
+        if _os.path.exists(src_full) and not _os.path.exists(dst_full):
+            shutil.copy2(src_full, dst_full)
+        new_tuples.append(("labeled-data", video_name, new_basename))
+
+    columns = pd.MultiIndex.from_product(
+        [[scorer], bodyparts, ["x", "y"]],
+        names=["scorer", "bodyparts", "coords"],
+    )
+    index = pd.MultiIndex.from_tuples(new_tuples)
+    return pd.DataFrame(data, index=index, columns=columns)
+
+
 if __name__ == "__main__":
     print("=" * 60)
-    print("  OpenLabel — DeepLabCut Training")
+    print("  OpenLabel \u2014 DeepLabCut Training (DLC 3.x / PyTorch)")
     print("=" * 60)
     print()
 
@@ -1151,63 +1264,206 @@ if __name__ == "__main__":
     install_packages()
 
     import os
-    import deeplabcut
-    import matplotlib
-    matplotlib.use("Agg")
-    import matplotlib.pyplot as plt
-    from PIL import Image
+    import glob
+    import yaml
     import numpy as np
+    import pandas as pd
+    from PIL import Image
 
-    config_path = os.path.abspath("config.yaml")
+    import deeplabcut
+    from deeplabcut.core.engine import Engine
+
+    BODYPARTS = {repr(keypoint_names)}
+    SKELETON_PAIRS = {repr(skeleton_pairs)}
+    EPOCHS = {epochs}
+    BATCH_SIZE = {batch_size}
+
+    device = autodetect_device()
+    print(f"  Device: {{device}}")
+
+    project_root = os.path.abspath(".")
+    train_csvs = sorted(glob.glob("train/CollectedData_*.csv"))
+    val_csvs   = sorted(glob.glob("val/CollectedData_*.csv"))
+
+    if not train_csvs:
+        print("ERROR: no CollectedData_*.csv found in train/")
+        sys.exit(1)
+
+    # multianimal only when CSV actually has an 'individuals' header level
+    multianimal = any(csv_has_individuals(p) for p in train_csvs + val_csvs)
+
+    train_imgs = sorted(
+        glob.glob("train/images/*.png")
+        + glob.glob("train/images/*.jpg")
+        + glob.glob("train/images/*.jpeg")
+    )
+    if not train_imgs:
+        print("ERROR: no training images found in train/images/")
+        sys.exit(1)
+
+    # --- Build a real DLC project ---
+    video_dir = os.path.join(project_root, "dlc_anchor_videos")
+    os.makedirs(video_dir, exist_ok=True)
+    anchor_video = os.path.join(video_dir, "openlabel_anchor.mp4")
+    make_synthetic_video(anchor_video, train_imgs[0])
+    print(f"  Anchor video: {{anchor_video}}")
+
+    project_name = "OpenLabel_DLC"
+    experimenter = "OpenLabel"
+    config_path = deeplabcut.create_new_project(
+        project_name, experimenter, [anchor_video],
+        working_directory=project_root, copy_videos=True,
+        multianimal=multianimal,
+    )
     print(f"  Config: {{config_path}}")
 
-    # Step 2: Train
+    scorer = experimenter
+    project_dir = os.path.dirname(config_path)
+    video_name = os.path.splitext(os.path.basename(anchor_video))[0]
+    labeled_dir = os.path.join(project_dir, "labeled-data", video_name)
+    os.makedirs(labeled_dir, exist_ok=True)
+
+    train_dfs, val_dfs = [], []
+    for csv_path in train_csvs:
+        train_dfs.append(import_labeled_frames(
+            csv_path, "train/images", labeled_dir, scorer, BODYPARTS, prefix="train_"
+        ))
+    for csv_path in val_csvs:
+        val_dfs.append(import_labeled_frames(
+            csv_path, "val/images", labeled_dir, scorer, BODYPARTS, prefix="val_"
+        ))
+
+    all_dfs = train_dfs + val_dfs
+    if not all_dfs:
+        print("ERROR: no annotations imported")
+        sys.exit(1)
+
+    combined = pd.concat(all_dfs, axis=0)
+    combined = combined[~combined.index.duplicated(keep="first")]
+
+    h5_path = os.path.join(labeled_dir, f"CollectedData_{{scorer}}.h5")
+    csv_out = os.path.join(labeled_dir, f"CollectedData_{{scorer}}.csv")
+    combined.to_hdf(h5_path, key="df_with_missing", mode="w")
+    combined.to_csv(csv_out)
+    print(f"  Imported {{len(combined)}} labeled frames")
+
+    n_train = sum(len(df) for df in train_dfs)
+    n_val   = sum(len(df) for df in val_dfs)
+    n_total = n_train + n_val
+    train_indices = list(range(n_train))
+    test_indices  = list(range(n_train, n_total))
+    training_fraction = round(n_train / n_total, 2) if n_total > 0 else 0.95
+
+    # Patch the project config (bodyparts/skeleton/split/etc.)
+    with open(config_path) as f:
+        cfg = yaml.safe_load(f)
+    cfg["bodyparts"] = list(BODYPARTS)
+    cfg["skeleton"] = SKELETON_PAIRS
+    cfg["TrainingFraction"] = [training_fraction]
+    cfg["pcutoff"] = 0.4
+    cfg["multianimalproject"] = bool(multianimal)
+    with open(config_path, "w") as f:
+        yaml.safe_dump(cfg, f, sort_keys=False)
+
+    # --- Train ---
     print()
     print("[2/3] Training...")
-    print(f"  Epochs: {epochs}")
-    print(f"  GPU:    {gpu_flag}")
+    print(f"  Epochs:     {{EPOCHS}}")
+    print(f"  Batch size: {{BATCH_SIZE}}")
+    print(f"  Train/Val:  {{n_train}} / {{n_val}}  (fraction={{training_fraction}})")
+    print(f"  Device:     {{device}}")
     print()
 
-    deeplabcut.create_training_dataset(config_path)
-    deeplabcut.train_network(
+    deeplabcut.create_training_dataset(
         config_path,
-        maxiters={epochs * 1000},
-        displayiters=100,
-        saveiters=5000,
-        allow_growth={gpu_flag},
+        num_shuffles=1,
+        trainIndices=[train_indices],
+        testIndices=[test_indices],
+        userfeedback=False,
+        net_type="resnet_50",
+        engine=Engine.PYTORCH,
     )
 
-    # Step 3: Inference demo
+    deeplabcut.train_network(
+        config_path,
+        shuffle=1,
+        trainingsetindex=0,
+        epochs=EPOCHS,
+        save_epochs=max(1, EPOCHS // 10),
+        batch_size=BATCH_SIZE,
+        device=device,
+        engine=Engine.PYTORCH,
+    )
+
+    print("Training complete!")
+
+    # --- Inference demo ---
     print()
     print("[3/3] Inference demo...")
 
-    val_img_dir = "val/images"
-    if not os.path.exists(val_img_dir):
-        val_img_dir = "train/images"
+    demo_imgs = sorted(
+        glob.glob("val/images/*.png")
+        + glob.glob("val/images/*.jpg")
+        + glob.glob("val/images/*.jpeg")
+    )
+    if not demo_imgs:
+        demo_imgs = train_imgs
 
-    demo_images = [f for f in os.listdir(val_img_dir) if f.lower().endswith((".png", ".jpg", ".jpeg"))]
+    if demo_imgs:
+        demo_img_path = demo_imgs[0]
+        demo_video = os.path.join(video_dir, "demo_video.mp4")
+        make_synthetic_video(demo_video, demo_img_path, num_frames=2)
 
-    if demo_images:
-        demo_path = os.path.join(val_img_dir, demo_images[0])
-        print(f"  Demo image: {{demo_path}}")
+        deeplabcut.analyze_videos(
+            config_path, [demo_video],
+            shuffle=1, save_as_csv=True,
+            engine=Engine.PYTORCH, device=device,
+        )
 
-        deeplabcut.analyze_videos(config_path, [demo_path], save_as_csv=True)
+        import matplotlib
+        matplotlib.use("Agg")
+        import matplotlib.pyplot as plt
 
-        img = Image.open(demo_path)
+        demo_img = Image.open(demo_img_path).convert("RGB")
         fig, axes = plt.subplots(1, 2, figsize=(16, 8))
-        axes[0].imshow(img)
-        axes[0].set_title("Original")
-        axes[0].axis("off")
+        axes[0].imshow(demo_img); axes[0].set_title("Original");   axes[0].axis("off")
+        axes[1].imshow(demo_img); axes[1].set_title("Prediction"); axes[1].axis("off")
 
-        axes[1].imshow(img)
-        axes[1].set_title("DeepLabCut Prediction")
-        axes[1].axis("off")
+        results_csvs = sorted(glob.glob(os.path.join(video_dir, "demo_video*.csv")))
+        if results_csvs:
+            try:
+                res = pd.read_csv(results_csvs[0], header=[0, 1, 2], index_col=0)
+                row = res.iloc[0]
+                colors = plt.cm.tab20(np.linspace(0, 1, max(len(BODYPARTS), 1)))
+                for i, bp in enumerate(BODYPARTS):
+                    try:
+                        x  = float(row[(scorer, bp, "x")])
+                        y  = float(row[(scorer, bp, "y")])
+                        lk = float(row[(scorer, bp, "likelihood")])
+                    except (KeyError, ValueError):
+                        continue
+                    if lk > 0.3:
+                        axes[1].plot(x, y, "o", color=colors[i], markersize=6)
+                        axes[1].annotate(
+                            bp, (x, y), fontsize=6, color="white",
+                            bbox=dict(boxstyle="round,pad=0.15", fc="black", alpha=0.6),
+                            ha="center", va="bottom", xytext=(0, 5),
+                            textcoords="offset points",
+                        )
+                for pair in SKELETON_PAIRS:
+                    if len(pair) >= 2:
+                        try:
+                            x1 = float(row[(scorer, pair[0], "x")])
+                            y1 = float(row[(scorer, pair[0], "y")])
+                            x2 = float(row[(scorer, pair[1], "x")])
+                            y2 = float(row[(scorer, pair[1], "y")])
+                            axes[1].plot([x1, x2], [y1, y2], "c-", linewidth=2, alpha=0.7)
+                        except (KeyError, ValueError):
+                            pass
+            except Exception as e:
+                print(f"  Could not parse predictions: {{e}}")
 
-        KEYPOINT_NAMES = {repr(keypoint_names)}
-        print(f"  Keypoints: {{KEYPOINT_NAMES}}")
-        print("  (Full visualization available via deeplabcut.plot_trajectories)")
-
-        plt.suptitle("OpenLabel — DeepLabCut Result", fontsize=14, fontweight="bold")
+        plt.suptitle("OpenLabel \u2014 DeepLabCut Result", fontsize=14, fontweight="bold")
         plt.tight_layout()
         plt.savefig("inference_result.png", dpi=150, bbox_inches="tight")
         print(f"  Result saved to: inference_result.png")

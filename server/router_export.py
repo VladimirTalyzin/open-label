@@ -254,28 +254,9 @@ def _generate_dlc(entries, skeleton_template, output_dir, split_name):
         with open(csv_path, "w", newline="") as f:
             f.write(output.getvalue())
 
-    # Config YAML (once, not per split)
-    config_path = join_path(output_dir, "config.yaml")
-    if not path.exists(config_path):
-        skeleton_names = []
-        for conn in connections:
-            if len(conn) >= 2 and conn[0] < len(keypoint_names) and conn[1] < len(keypoint_names):
-                skeleton_names.append(f"  - [{keypoint_names[conn[0]]}, {keypoint_names[conn[1]]}]")
-
-        bodyparts_yaml = "\n".join(f"  - {name}" for name in keypoint_names)
-        skeleton_yaml = "\n".join(skeleton_names) if skeleton_names else "  []"
-
-        config_content = (
-            f"Task: multi_animal\n"
-            f"scorer: {scorer}\n"
-            f"date: 2024\n"
-            f"multianimalproject: true\n"
-            f"bodyparts:\n{bodyparts_yaml}\n"
-            f"skeleton:\n{skeleton_yaml}\n"
-        )
-
-        with open(config_path, "w") as f:
-            f.write(config_content)
+    # Note: we deliberately do NOT write a fake DLC config.yaml here.
+    # The generated train.py builds a real DLC project via create_new_project()
+    # and patches it with bodyparts/skeleton from the embedded constants.
 
 
 def _generate_yolo(entries, skeleton_template, labels_map, output_dir, split_name):

@@ -419,44 +419,54 @@ function loadUsers()
 function loadProjectGroups()
 {
     Promise.all([
+        fetch("/admin/all_projects", {cache: "no-store"}).then(r => r.json()),
         fetch("/admin/project_groups", {cache: "no-store"}).then(r => r.json()),
         fetch("/admin/groups", {cache: "no-store"}).then(r => r.json())
-    ]).then(([pgData, groupsData]) =>
+    ]).then(([allData, pgData, groupsData]) =>
     {
         const container = document.getElementById("project-groups-list")
         container.innerHTML = ""
 
-        if (pgData.project_groups.length === 0)
+        const projects = (allData && allData.projects) ? allData.projects : []
+        if (projects.length === 0)
         {
-            container.textContent = "No projects assigned to groups yet. Create projects first, then assign them here."
+            container.textContent = "No projects yet. Create a project first."
             return
         }
 
-        const groupMap = {}
-        for (const g of groupsData.groups)
+        // project_id -> group_id (текущее назначение)
+        const assigned = {}
+        for (const pg of pgData.project_groups)
         {
-            groupMap[g.id] = g.name
+            assigned[pg.project_id] = pg.group_id
         }
 
-        for (const pg of pgData.project_groups)
+        for (const proj of projects)
         {
             const div = document.createElement("div")
             div.classList.add("d-flex", "align-items-center", "mb-2", "p-2", "border", "rounded", "gap-2")
 
             const label = document.createElement("span")
-            label.textContent = `Project #${pg.project_id}`
-            label.style.minWidth = "100px"
+            label.textContent = proj.project_name
+                ? `Project #${proj.project_id} (${proj.project_name})`
+                : `Project #${proj.project_id}`
+            label.style.minWidth = "220px"
 
             const select = document.createElement("select")
             select.classList.add("form-select", "form-select-sm")
-            select.style.maxWidth = "200px"
+            select.style.maxWidth = "260px"
+
+            const noneOption = document.createElement("option")
+            noneOption.value = "0"
+            noneOption.textContent = "— нет группы (доступ всем) —"
+            select.appendChild(noneOption)
 
             for (const g of groupsData.groups)
             {
                 const option = document.createElement("option")
                 option.value = g.id
                 option.textContent = g.name
-                if (g.id === pg.group_id)
+                if (g.id === assigned[proj.project_id])
                 {
                     option.selected = true
                 }
@@ -466,7 +476,7 @@ function loadProjectGroups()
             select.addEventListener("change", () =>
             {
                 const formData = new FormData()
-                formData.append("project_id", pg.project_id)
+                formData.append("project_id", proj.project_id)
                 formData.append("group_id", select.value)
                 fetch("/admin/project_group", {method: "POST", body: formData})
                     .then(r => r.json())

@@ -995,6 +995,7 @@ export function createSkeletonAnnotator(canvas, template, labels, onBeforeChange
     let currentLabel = null
     let dragState = null
     let showNames = false
+    let hoveredPoint = null   // {idx, pi} точки активного скелета под курсором (для подсветки ×1.5)
 
     const POINT_HIT = 14
     const HANDLE_HIT = 10
@@ -1182,11 +1183,14 @@ export function createSkeletonAnnotator(canvas, template, labels, onBeforeChange
             ctx.setLineDash([])
 
             // --- Points ---
-            const pr = sel ? POINT_RADIUS_ANNOT + 2 : POINT_RADIUS_ANNOT
+            const prBase = sel ? POINT_RADIUS_ANNOT + 2 : POINT_RADIUS_ANNOT
             for (let pi = 0; pi < skel.points.length; pi++)
             {
                 const p = skel.points[pi]
                 const isHidden = p.visible !== undefined && p.visible < 2
+                // точка под курсором у активного скелета — крупнее в 1.5 раза («схватится» мышью)
+                const isHover = sel && hoveredPoint && hoveredPoint.idx === i && hoveredPoint.pi === pi
+                const pr = isHover ? prBase * 1.5 : prBase
 
                 ctx.beginPath()
                 ctx.arc(p.x, p.y, pr, 0, Math.PI * 2)
@@ -1469,6 +1473,29 @@ export function createSkeletonAnnotator(canvas, template, labels, onBeforeChange
     {
         if (!dragState)
         {
+            // Не тащим — подсвечиваем точку активного скелета под курсором (×1.5)
+            const {mouse_x: hx, mouse_y: hy} = getMouseCoordinatesCanvas(e, canvas)
+            let newHover = null
+            if (selectedIdx >= 0 && selectedIdx < annotations.length)
+            {
+                const skel = annotations[selectedIdx]
+                for (let pi = 0; pi < skel.points.length; pi++)
+                {
+                    if (dist(hx, hy, skel.points[pi].x, skel.points[pi].y) <= POINT_HIT)
+                    {
+                        newHover = {idx: selectedIdx, pi}
+                        break
+                    }
+                }
+            }
+            const changed = (!!newHover !== !!hoveredPoint)
+                || (newHover && hoveredPoint && (newHover.idx !== hoveredPoint.idx || newHover.pi !== hoveredPoint.pi))
+            if (changed)
+            {
+                hoveredPoint = newHover
+                canvas.style.cursor = newHover ? "pointer" : ""
+                render()
+            }
             return
         }
         const {mouse_x: mx, mouse_y: my} = getMouseCoordinatesCanvas(e, canvas)
@@ -1562,6 +1589,16 @@ export function createSkeletonAnnotator(canvas, template, labels, onBeforeChange
         {
             dragState = null
             onChanged()
+        }
+    })
+
+    addEventListenerWithId(canvas, "mouseleave", "sk_ml", () =>
+    {
+        if (hoveredPoint)
+        {
+            hoveredPoint = null
+            canvas.style.cursor = ""
+            render()
         }
     })
 

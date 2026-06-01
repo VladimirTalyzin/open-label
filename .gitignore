@@ -15,6 +15,10 @@ __pycache__/
 .vscode/
 *.swp
 *.swo
+*.plist
+*.command
+*.app
+*.cmd
 
 # OS
 .DS_Store
@@ -24,3 +28,5 @@ Thumbs.db
 server/projects/
 /server/admin_password.txt
 /server/openlabel.db
+/server/.venv
+.*

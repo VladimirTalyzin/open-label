@@ -21,6 +21,7 @@ from router_masks import router as masks_router
 from router_skeletons import router as skeletons_router
 from router_predict import router as predict_router
 from router_export import router as export_router
+from router_channels import router as channels_router
 
 init_db()
 
@@ -48,6 +49,7 @@ app.include_router(masks_router)
 app.include_router(skeletons_router)
 app.include_router(predict_router)
 app.include_router(export_router)
+app.include_router(channels_router)
 
 if __name__ == "__main__":
     import uvicorn

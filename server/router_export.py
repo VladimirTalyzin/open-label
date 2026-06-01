@@ -41,10 +41,25 @@ def _load_project(id_project):
     return project_path, settings
 
 
-def _collect_annotated_images(project_path, settings):
-    """Collect images that have skeleton annotations."""
+def _channel_sub(settings, channel):
+    """Подкаталог канала для images/skeletons: '' для основного/без каналов, иначе имя канала."""
+    channels = settings.get("channels", []) or []
+    if not channel or not channels:
+        return ""
+    main = next((c.get("name") for c in channels if c.get("main")), channels[0].get("name"))
+    return "" if channel == main else channel
+
+
+def _channel_mask_key(settings, channel, image_name):
+    sub = _channel_sub(settings, channel)
+    return image_name if not sub else f"{sub}__{image_name}"
+
+
+def _collect_annotated_images(project_path, settings, channel=None):
+    """Collect images that have skeleton annotations (for the given channel)."""
     images = settings.get("images", [])
-    skeletons_dir = join_path(project_path, "skeletons")
+    sub = _channel_sub(settings, channel)
+    skeletons_dir = join_path(project_path, "skeletons", sub) if sub else join_path(project_path, "skeletons")
     result = []
 
     for img_data in images:
@@ -59,19 +74,24 @@ def _collect_annotated_images(project_path, settings):
     return result
 
 
-def _get_image_dimensions(project_path, image_name):
+def _get_image_dimensions(project_path, image_name, settings=None, channel=None):
     """Get image width and height."""
-    image_path = join_path(project_path, "images", image_name)
+    sub = _channel_sub(settings or {}, channel)
+    images_dir = join_path(project_path, "images", sub) if sub else join_path(project_path, "images")
+    image_path = join_path(images_dir, image_name)
     with Image.open(image_path) as img:
         return img.width, img.height
 
 
-def _process_image(project_path, image_name):
-    """Load image and apply skeleton mask blur if mask exists."""
-    image_path = join_path(project_path, "images", image_name)
+def _process_image(project_path, image_name, settings=None, channel=None):
+    """Load image (channel-aware) and apply skeleton mask blur if mask exists."""
+    sub = _channel_sub(settings or {}, channel)
+    images_dir = join_path(project_path, "images", sub) if sub else join_path(project_path, "images")
+    image_path = join_path(images_dir, image_name)
     image = Image.open(image_path).convert("RGB")
 
-    mask_path = join_path(project_path, "skeleton_masks", f"{image_name}.png")
+    mask_key = _channel_mask_key(settings or {}, channel, image_name)
+    mask_path = join_path(project_path, "skeleton_masks", f"{mask_key}.png")
     if path.exists(mask_path):
         mask = Image.open(mask_path).convert("L")
         if mask.size != image.size:
@@ -348,6 +368,7 @@ async def export_dataset(
     request: Request,
     id_project: int,
     format: str = Query("yolo"),
+    channel: str = Query(None),
     train_pct: int = Query(70),
     val_pct: int = Query(20),
     test_pct: int = Query(10),
@@ -383,7 +404,7 @@ async def export_dataset(
     skeleton_template = settings.get("skeleton_template", {"points": [], "connections": []})
     default_class = skeleton_template.get("skeleton_class", "") or "object"
     default_superclass = skeleton_template.get("skeleton_superclass", "") or "object"
-    annotated = _collect_annotated_images(project_path, settings)
+    annotated = _collect_annotated_images(project_path, settings, channel)
 
     if not annotated:
         raise HTTPException(status_code=400, detail="No annotated images found")
@@ -413,7 +434,7 @@ async def export_dataset(
             # Phase 1: Process images (blur masks, generate augmentations)
             for idx, (image_name, skeletons) in enumerate(annotated):
                 try:
-                    image = _process_image(project_path, image_name)
+                    image = _process_image(project_path, image_name, settings, channel)
                 except Exception:
                     continue
 

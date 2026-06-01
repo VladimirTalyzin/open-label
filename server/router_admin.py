@@ -98,8 +98,37 @@ async def admin_update_user_group(request: Request, user_id: int = Form(...), gr
 async def admin_set_project_group(request: Request, project_id: int = Form(...), group_id: int = Form(...)):
     require_admin(request)
     remove_project_group(project_id)
-    assign_project_to_group(project_id, group_id)
+    if group_id and group_id > 0:          # group_id == 0 → снять назначение (доступ всем)
+        assign_project_to_group(project_id, group_id)
     return JSONResponse(content={"result": "ok"})
+
+
+@router.get("/admin/all_projects", tags=["Admin"])
+async def admin_get_all_projects(request: Request):
+    """Все проекты на диске (id + имя) — чтобы в админке были видны и неназначенные."""
+    require_admin(request)
+    from os import path, listdir
+    from json import load
+    from helpers import get_script_directory
+    from utility import join_path
+
+    projects_path = join_path(get_script_directory(), "projects")
+    projects = []
+    if path.exists(projects_path):
+        for entry in listdir(projects_path):
+            if not entry.isdigit():
+                continue
+            settings_file = join_path(projects_path, entry, "project_settings.json")
+            name = ""
+            if path.exists(settings_file):
+                try:
+                    with open(settings_file, "r") as f:
+                        name = load(f).get("project_name", "") or ""
+                except Exception:
+                    name = ""
+            projects.append({"project_id": int(entry), "project_name": name})
+    projects.sort(key=lambda p: p["project_id"])
+    return JSONResponse(content={"projects": projects})
 
 
 @router.get("/admin/project_groups", tags=["Admin"])

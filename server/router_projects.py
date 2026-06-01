@@ -286,10 +286,22 @@ async def get_images_list(id_project: int):
             project_data = load(file_settings)
             images = project_data.get("images", [])
             skeletons_dir = join_path(project_path, "skeletons")
+            channels = project_data.get("channels", []) or []
             for img in images:
-                skel_file = join_path(skeletons_dir, f"{img['image']}.json")
-                img["has_skeleton"] = path.exists(skel_file)
+                name = img["image"]
+                # Основной канал хранит скелет в skeletons/<image>.json,
+                # дополнительные — в skeletons/<channel>/<image>.json
+                img["has_skeleton"] = path.exists(join_path(skeletons_dir, f"{name}.json"))
                 img["has_masks"] = bool(img.get("masks"))
+                if channels:
+                    cs = []
+                    for ch in channels:
+                        if ch.get("main"):
+                            has = path.exists(join_path(skeletons_dir, f"{name}.json"))
+                        else:
+                            has = path.exists(join_path(skeletons_dir, ch["name"], f"{name}.json"))
+                        cs.append({"name": ch["name"], "main": bool(ch.get("main")), "has": has})
+                    img["channel_skeletons"] = cs
             return JSONResponse(content={"images": images, "preview_base": f"/get_preview/{id_project}"})
 
     else:

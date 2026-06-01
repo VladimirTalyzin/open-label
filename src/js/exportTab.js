@@ -620,7 +620,7 @@ function buildResizeSection()
     }
 }
 
-function startExport(project, format, splitValues, augPct, augToggles, shapeMode, resizeMode, resizeSize, trainingOpts)
+function startExport(project, format, splitValues, augPct, augToggles, shapeMode, resizeMode, resizeSize, trainingOpts, channel)
 {
     const overlay = document.createElement("div")
     overlay.classList.add("upload-progress-overlay")
@@ -669,6 +669,11 @@ function startExport(project, format, splitValues, augPct, augToggles, shapeMode
         resize_mode: resizeMode,
         resize_size: resizeSize,
     })
+
+    if (channel)
+    {
+        params.set("channel", channel)
+    }
 
     if (trainingOpts && trainingOpts.enabled)
     {
@@ -1067,6 +1072,32 @@ export function initExportTabHandler(exportButton, exportDiv, showContent, proje
                 trainingSection.updateDefaults()
             })
 
+            // Channel selector (multi-channel projects) — export annotations per channel
+            let channelSelect = null
+            const projChannels = Array.isArray(project.channels) ? project.channels : []
+            if (projChannels.length >= 1)
+            {
+                const chRow = document.createElement("div")
+                chRow.classList.add("mb-2")
+                chRow.style.textAlign = "left"
+                const chLabel = document.createElement("label")
+                chLabel.classList.add("form-label", "me-2")
+                chLabel.textContent = "Канал для экспорта:"
+                channelSelect = document.createElement("select")
+                channelSelect.classList.add("form-select", "form-select-sm", "d-inline-block")
+                channelSelect.style.width = "200px"
+                for (const ch of projChannels)
+                {
+                    const opt = document.createElement("option")
+                    opt.value = ch.name
+                    opt.textContent = ch.name + (ch.main ? " ★" : "")
+                    channelSelect.appendChild(opt)
+                }
+                chRow.appendChild(chLabel)
+                chRow.appendChild(channelSelect)
+                exportDiv.appendChild(chRow)
+            }
+
             // Export button
             const exportBtn = document.createElement("button")
             exportBtn.classList.add("btn", "btn-primary", "btn-lg", "w-100", "mt-2", "mb-3")
@@ -1090,7 +1121,8 @@ export function initExportTabHandler(exportButton, exportDiv, showContent, proje
                     shapeSection.getMode(),
                     resizeSection.getMode(),
                     resizeSection.getSize(),
-                    trainingSection.getOpts()
+                    trainingSection.getOpts(),
+                    channelSelect ? channelSelect.value : null
                 )
                 setTimeout(() => { exportBtn.disabled = false }, 3000)
             })

@@ -216,6 +216,7 @@ export function updateProjects(responseJson, clear)
                     {
                         project.project_type = typeSelect.value
                         skeletonLi.style.display = typeSelect.value === "yolo-skeleton" ? "" : "none"
+                        channelsSection.style.display = typeSelect.value === "yolo-skeleton" ? "block" : "none"
                         labelsLi.style.display = typeSelect.value === "yolo-skeleton" ? "none" : ""
                         exportLi.style.display = (typeSelect.value === "yolo-skeleton" && project.annotated_count > 0) || typeSelect.value === "segmentation" ? "" : "none"
                         typeSelect.style.borderColor = "green"
@@ -241,6 +242,169 @@ export function updateProjects(responseJson, clear)
 
         setValueListener(predictionUrlInput, "set_prediction_url", "prediction_url", {id_project: project.id_project})
         settingsDiv.appendChild(predictionUrlInput)
+
+        // --- Channels (multi-channel for yolo-skeleton: main + extra views) ---
+        const channelsSection = document.createElement("div")
+        channelsSection.style.cssText = "text-align:left;border:1px solid #ddd;border-radius:6px;padding:10px;margin-bottom:1rem;"
+        channelsSection.style.display = (project.project_type === "yolo-skeleton") ? "block" : "none"
+
+        const channelsTitle = document.createElement("div")
+        channelsTitle.innerHTML = "<b>Каналы</b> &mdash; ракурсы съёмки одного объекта. " +
+            "Радиокнопка слева выбирает <b>основной</b> канал (★): его изображения и разметка хранятся в корне проекта, " +
+            "дополнительные каналы &mdash; в подпапках. У каждого канала можно задать URL модели предсказания."
+        channelsTitle.style.cssText = "margin-bottom:8px;font-size:13px;"
+        channelsSection.appendChild(channelsTitle)
+
+        const channelsTable = document.createElement("div")
+        channelsSection.appendChild(channelsTable)
+
+        const previewRow = document.createElement("div")
+        previewRow.style.cssText = "margin-top:8px;font-size:13px;"
+        channelsSection.appendChild(previewRow)
+
+        let channelsData = Array.isArray(project.channels) ? JSON.parse(JSON.stringify(project.channels)) : []
+
+        // Назначается при построении сетки Images; позволяет мгновенно обновить превью
+        let refreshImagePreviews = null
+
+        // Выбор канала, из которого показывать preview + маленький скелет (по умолчанию — основной)
+        const renderPreview = () =>
+        {
+            previewRow.innerHTML = ""
+            if (channelsData.length < 1) return
+            const lbl = document.createElement("span")
+            lbl.textContent = "Канал для preview: "
+            lbl.classList.add("me-2")
+            const sel = document.createElement("select")
+            sel.classList.add("form-select", "form-select-sm", "d-inline-block")
+            sel.style.width = "200px"
+            const mainNm = (channelsData.find(c => c.main) || channelsData[0] || {}).name
+            const cur = project.preview_channel || mainNm
+            channelsData.forEach(c =>
+            {
+                const o = document.createElement("option")
+                o.value = c.name
+                o.textContent = c.name + (c.main ? " ★" : "")
+                if (c.name === cur) o.selected = true
+                sel.appendChild(o)
+            })
+            sel.addEventListener("change", () =>
+            {
+                const fd = new FormData()
+                fd.append("id_project", project.id_project)
+                fd.append("channel", sel.value)
+                fetch("/set_preview_channel", {method: "POST", body: fd})
+                    .then(r => r.json())
+                    .then(resp =>
+                    {
+                        if (resp.result === "ok")
+                        {
+                            project.preview_channel = resp.value
+                            // зелёная вспышка на 0.5с — подтверждение применения
+                            sel.style.borderColor = "green"
+                            sel.style.borderWidth = "3px"
+                            setTimeout(() => { sel.style.borderColor = ""; sel.style.borderWidth = "" }, 500)
+                            // мгновенно обновляем превью без перезагрузки страницы
+                            if (typeof refreshImagePreviews === "function") refreshImagePreviews()
+                        }
+                    })
+            })
+            previewRow.append(lbl, sel)
+        }
+
+        const saveChannels = () =>
+        {
+            const fd = new FormData()
+            fd.append("id_project", project.id_project)
+            fd.append("channels", JSON.stringify(channelsData))
+            fetch("/set_project_channels", {method: "POST", body: fd})
+                .then(r => r.json())
+                .then(resp =>
+                {
+                    if (resp.result === "ok")
+                    {
+                        project.channels = resp.value
+                        channelsData = JSON.parse(JSON.stringify(resp.value))
+                        renderChannels()
+                    }
+                })
+        }
+
+        const renderChannels = () =>
+        {
+            channelsTable.innerHTML = ""
+            channelsData.forEach((ch, idx) =>
+            {
+                const row = document.createElement("div")
+                row.style.cssText = "display:flex;gap:6px;align-items:center;margin-bottom:4px;"
+
+                const mainRadio = document.createElement("input")
+                mainRadio.type = "radio"
+                mainRadio.name = `main-ch-${project.id_project}`
+                mainRadio.checked = !!ch.main
+                mainRadio.title = "Сделать этот канал основным (хранится в корне проекта)"
+                mainRadio.addEventListener("change", () =>
+                {
+                    channelsData.forEach((c, i) => { c.main = (i === idx) })
+                    saveChannels()
+                })
+
+                const nameInput = document.createElement("input")
+                nameInput.type = "text"
+                nameInput.value = ch.name || ""
+                nameInput.placeholder = "имя канала"
+                nameInput.classList.add("form-control", "form-control-sm")
+                nameInput.style.width = "130px"
+                nameInput.addEventListener("change", () => { ch.name = nameInput.value.trim(); saveChannels() })
+
+                const modelInput = document.createElement("input")
+                modelInput.type = "text"
+                modelInput.value = ch.model_url || ""
+                modelInput.placeholder = "URL модели (например http://127.0.0.1:8200/predict/top)"
+                modelInput.classList.add("form-control", "form-control-sm")
+                modelInput.style.flex = "1"
+                modelInput.addEventListener("change", () => { ch.model_url = modelInput.value.trim(); saveChannels() })
+
+                const delBtn = document.createElement("button")
+                delBtn.classList.add("btn", "btn-sm", "btn-outline-danger")
+                delBtn.textContent = "✕"
+                delBtn.title = "Удалить канал"
+                delBtn.addEventListener("click", () =>
+                {
+                    channelsData.splice(idx, 1)
+                    if (channelsData.length && !channelsData.some(c => c.main)) channelsData[0].main = true
+                    saveChannels()
+                })
+
+                const mainMark = document.createElement("span")
+                mainMark.textContent = ch.main ? "★" : ""
+                mainMark.title = ch.main ? "Основной канал" : ""
+                mainMark.style.cssText = "font-size:12px;color:#e3a008;width:12px;display:inline-block;text-align:center;"
+
+                row.append(mainRadio, mainMark, nameInput, modelInput, delBtn)
+                channelsTable.appendChild(row)
+            })
+            renderPreview()
+        }
+        renderChannels()
+
+        const addChannelBtn = document.createElement("button")
+        addChannelBtn.classList.add("btn", "btn-sm", "btn-outline-primary", "mt-1")
+        addChannelBtn.textContent = "+ Добавить канал"
+        addChannelBtn.addEventListener("click", () =>
+        {
+            if (channelsData.length === 0)
+            {
+                channelsData.push({name: "side", main: true, model_url: ""})
+            }
+            else
+            {
+                channelsData.push({name: "channel" + (channelsData.length + 1), main: false, model_url: ""})
+            }
+            saveChannels()
+        })
+        channelsSection.appendChild(addChannelBtn)
+        settingsDiv.appendChild(channelsSection)
 
         const exportButton = document.createElement("button")
         exportButton.classList.add("btn", "btn-outline-primary", "mb-4", "me-2")
@@ -515,33 +679,144 @@ export function updateProjects(responseJson, clear)
 
                             const previewBase = respJson.hasOwnProperty("preview_base") ? respJson.preview_base : null
 
+                            // Канал, из которого показывать preview (по умолчанию — основной).
+                            // Считаем динамически, чтобы смена канала применялась без перезагрузки.
+                            const pvChannels = Array.isArray(project.channels) ? project.channels : []
+                            const pvMainName = ((pvChannels.find(c => c.main) || pvChannels[0] || {}).name) || null
+                            const computePreview = () =>
+                            {
+                                const ch = (pvChannels.length >= 1 && project.preview_channel) ? project.preview_channel : pvMainName
+                                return {ch, isMain: !ch || ch === pvMainName}
+                            }
+
                             let previewCacheKey = ""
                             const prepareImage = (imageObject, imageData, previewBaseUrl) =>
                             {
-                                const block = imageData.preview_block != null ? imageData.preview_block : 0
-                                const cacheSuffix = previewCacheKey ? `?t=${previewCacheKey}` : ""
-                                const pf = `${previewBaseUrl}/${block}.png${cacheSuffix}`
-                                imageObject.style.backgroundImage = `url(${pf})`
-                                const offset = imageData.block_offset != null ? imageData.block_offset : (imageData.accumulated_height || 0)
-                                imageObject.style.backgroundPosition = `0px -${offset}px`
-                                imageObject.style.backgroundSize = `${imagesWidth} auto`
+                                const {ch: previewCh, isMain: previewIsMain} = computePreview()
                                 imageObject.style.backgroundRepeat = "no-repeat"
+                                imageObject.style.backgroundSize = `${imagesWidth} auto`
                                 imageObject.style.height = `${imageData.preview_height}px`
                                 imageObject.style.width = imagesWidth
                                 imageObject.style.marginTop = "2.5pt"
                                 imageObject.style.marginLeft = "2.5pt"
                                 imageObject.style.border = "none"
+                                if (pvChannels.length >= 1 && !previewIsMain)
+                                {
+                                    // отдельная картинка превью выбранного канала
+                                    const cacheSuffix = previewCacheKey ? `?t=${previewCacheKey}` : ""
+                                    const url = `/get_channel_preview/${project.id_project}/${encodeURIComponent(previewCh)}/${encodeURIComponent(imageData.image)}${cacheSuffix}`
+                                    imageObject.style.backgroundImage = `url(${url})`
+                                    imageObject.style.backgroundPosition = "0px 0px"
+                                }
+                                else
+                                {
+                                    const block = imageData.preview_block != null ? imageData.preview_block : 0
+                                    const cacheSuffix = previewCacheKey ? `?t=${previewCacheKey}` : ""
+                                    const pf = `${previewBaseUrl}/${block}.png${cacheSuffix}`
+                                    imageObject.style.backgroundImage = `url(${pf})`
+                                    const offset = imageData.block_offset != null ? imageData.block_offset : (imageData.accumulated_height || 0)
+                                    imageObject.style.backgroundPosition = `0px -${offset}px`
+                                }
                             }
 
                             let lastZoomLevel = 100
                             let lastActiveTool = null
                             let lastActiveLabel = null
+                            let lastActiveChannel = null
 
                             const updateSelectedCount = () =>
                             {
                                 const count = imageCards.filter(c => c.checkbox.checked).length
                                 selectedCountSpan.textContent = `Selected: ${count}`
                                 bulkDeleteBtn.disabled = count === 0
+                            }
+
+                            // Отметки статуса разметки на превью: один ✓ для обычного проекта,
+                            // или чип на каждый канал (зелёный = размечен) для многоканального.
+                            // Идемпотентна: при повторном вызове старые элементы удаляются (для live-обновления).
+                            const renderAnnotationStatus = (imageBlockEl, img, cardEl) =>
+                            {
+                                imageBlockEl.querySelectorAll(".annot-status-wrap, .annot-status-svg").forEach(e => e.remove())
+
+                                const bindHover = () =>
+                                {
+                                    if (cardEl.dataset.hoverBound) return
+                                    cardEl.dataset.hoverBound = "1"
+                                    cardEl.addEventListener("mouseenter", () =>
+                                    {
+                                        const s = imageBlockEl.querySelector(".annot-status-svg")
+                                        if (s) s.style.display = "block"
+                                    })
+                                    cardEl.addEventListener("mouseleave", () =>
+                                    {
+                                        const s = imageBlockEl.querySelector(".annot-status-svg")
+                                        if (s) s.style.display = "none"
+                                    })
+                                }
+
+                                const chans = Array.isArray(project.channels) ? project.channels : []
+                                if (chans.length >= 1)
+                                {
+                                    const cs = Array.isArray(img.channel_skeletons)
+                                        ? img.channel_skeletons
+                                        : chans.map(c => ({name: c.name, main: !!c.main, has: false}))
+                                    const wrap = document.createElement("div")
+                                    wrap.className = "annot-status-wrap"
+                                    wrap.style.cssText = "position:absolute;top:4px;right:4px;z-index:2;display:flex;flex-direction:column;gap:2px;align-items:flex-end;pointer-events:none;"
+                                    const {ch: previewCh, isMain: previewIsMain} = computePreview()
+                                    for (const c of cs)
+                                    {
+                                        const chip = document.createElement("span")
+                                        const isPv = c.name === previewCh
+                                        chip.textContent = (c.has ? `${c.name} ✓` : c.name) + (isPv ? " 👁" : "")
+                                        chip.style.cssText = `font-size:10px;font-weight:bold;padding:1px 6px;border-radius:10px;color:#fff;background:${c.has ? "#28a745" : "#adb5bd"};${isPv ? "outline:2px solid #0a84ff;" : ""}`
+                                        wrap.appendChild(chip)
+                                    }
+                                    imageBlockEl.appendChild(wrap)
+
+                                    // Маленький скелет на превью — из выбранного канала preview
+                                    const pCh = cs.find(c => c.name === previewCh) || cs.find(c => c.main) || cs[0]
+                                    if (pCh && pCh.has)
+                                    {
+                                        const svgUrl = previewIsMain
+                                            ? `/get_skeleton_svg/${project.id_project}/${encodeURIComponent(img.image)}?t=${Date.now()}`
+                                            : `/get_skeleton_svg_channel/${project.id_project}/${encodeURIComponent(previewCh)}/${encodeURIComponent(img.image)}?t=${Date.now()}`
+                                        const svgOverlay = document.createElement("img")
+                                        svgOverlay.className = "annot-status-svg"
+                                        svgOverlay.src = svgUrl
+                                        svgOverlay.style.cssText = "position:absolute;top:0;left:0;width:100%;height:100%;pointer-events:none;z-index:1;object-fit:fill;display:none;"
+                                        imageBlockEl.appendChild(svgOverlay)
+                                        bindHover()
+                                    }
+                                }
+                                else if (img.has_skeleton)
+                                {
+                                    const chip = document.createElement("span")
+                                    chip.className = "annot-status-wrap"
+                                    chip.textContent = "✓"
+                                    chip.style.cssText = "position:absolute;top:4px;right:4px;background:#28a745;color:#fff;font-size:10px;font-weight:bold;padding:1px 6px;border-radius:10px;z-index:2;pointer-events:none;"
+                                    imageBlockEl.appendChild(chip)
+
+                                    const svgOverlay = document.createElement("img")
+                                    svgOverlay.className = "annot-status-svg"
+                                    svgOverlay.src = `/get_skeleton_svg/${project.id_project}/${encodeURIComponent(img.image)}?t=${Date.now()}`
+                                    svgOverlay.style.cssText = "position:absolute;top:0;left:0;width:100%;height:100%;pointer-events:none;z-index:1;object-fit:fill;display:none;"
+                                    imageBlockEl.appendChild(svgOverlay)
+                                    bindHover()
+                                }
+                            }
+
+                            // Мгновенное обновление превью всех карточек (при смене канала preview)
+                            refreshImagePreviews = () =>
+                            {
+                                for (const entry of imageCards)
+                                {
+                                    if (entry.card.classList.contains("expanded")) continue
+                                    const block = entry.card.querySelector(".card-img-top")
+                                    if (!block) continue
+                                    prepareImage(block, entry.image, previewBase)
+                                    renderAnnotationStatus(block, entry.image, entry.card)
+                                }
                             }
 
                             const addImage = (imageVariable, previewBaseVariable) =>
@@ -583,23 +858,8 @@ export function updateProjects(responseJson, clear)
                                 })
                                 imageBlock.appendChild(cardCheckbox)
 
-                                // Annotation chip and hover overlay
-                                if (image.has_skeleton)
-                                {
-                                    const chip = document.createElement("span")
-                                    chip.textContent = "\u2713"
-                                    chip.style.cssText = "position:absolute;top:4px;right:4px;background:#28a745;color:#fff;font-size:10px;font-weight:bold;padding:1px 6px;border-radius:10px;z-index:2;pointer-events:none;"
-                                    imageBlock.appendChild(chip)
-
-                                    // SVG overlay (hidden by default, shown on hover)
-                                    const svgOverlay = document.createElement("img")
-                                    svgOverlay.src = `/get_skeleton_svg/${project.id_project}/${encodeURIComponent(image.image)}`
-                                    svgOverlay.style.cssText = "position:absolute;top:0;left:0;width:100%;height:100%;pointer-events:none;z-index:1;object-fit:fill;display:none;"
-                                    imageBlock.appendChild(svgOverlay)
-
-                                    imageCardDiv.addEventListener("mouseenter", () => { svgOverlay.style.display = "block" })
-                                    imageCardDiv.addEventListener("mouseleave", () => { svgOverlay.style.display = "none" })
-                                }
+                                // Annotation status (per-channel chips or single \u2713) + hover overlay
+                                renderAnnotationStatus(imageBlock, image, imageCardDiv)
 
                                 const imageCardBody = document.createElement("div")
                                 imageCardBody.classList.add("card-body")
@@ -796,22 +1056,8 @@ export function updateProjects(responseJson, clear)
                                         imageBlock.innerHTML = ""
                                         toolbar.remove()
 
-                                        // Restore annotation chip and SVG overlay
-                                        if (image.has_skeleton)
-                                        {
-                                            const chip = document.createElement("span")
-                                            chip.textContent = "\u2713"
-                                            chip.style.cssText = "position:absolute;top:4px;right:4px;background:#28a745;color:#fff;font-size:10px;font-weight:bold;padding:1px 6px;border-radius:10px;z-index:2;pointer-events:none;"
-                                            imageBlock.appendChild(chip)
-
-                                            const svgOverlay = document.createElement("img")
-                                            svgOverlay.src = `/get_skeleton_svg/${project.id_project}/${encodeURIComponent(image.image)}?t=${Date.now()}`
-                                            svgOverlay.style.cssText = "position:absolute;top:2.5pt;left:2.5pt;width:100%;height:100%;pointer-events:none;z-index:1;object-fit:fill;display:none;"
-                                            imageBlock.appendChild(svgOverlay)
-
-                                            imageCardDiv.addEventListener("mouseenter", () => { svgOverlay.style.display = "block" })
-                                            imageCardDiv.addEventListener("mouseleave", () => { svgOverlay.style.display = "none" })
-                                        }
+                                        // Restore annotation status (per-channel chips or single \u2713)
+                                        renderAnnotationStatus(imageBlock, image, imageCardDiv)
                                     })
 
                                     // --- Prev / Next image navigation ---
@@ -911,7 +1157,9 @@ export function updateProjects(responseJson, clear)
                                             prevImageBtn, nextImageBtn,
                                             closeButtonEl, blockButtons, imagesDiv,
                                             annotatedCountSpan,
-                                            onToolChange: (tool) => { lastActiveTool = tool }
+                                            initialChannel: lastActiveChannel,
+                                            onToolChange: (tool) => { lastActiveTool = tool },
+                                            onChannelChange: (ch) => { lastActiveChannel = ch }
                                         })
                                     }
                                     else
@@ -2091,6 +2339,96 @@ export function updateProjects(responseJson, clear)
                             imagesDiv.appendChild(bulkBar)
                             imagesDiv.appendChild(imagesListDiv)
                             imagesDiv.appendChild(addImageButton)
+
+                            // --- Per-channel upload buttons (multi-channel projects) ---
+                            const projChannels = Array.isArray(project.channels) ? project.channels : []
+                            if (projChannels.length >= 1)
+                            {
+                                const mainChName = (projChannels.find(c => c.main) || projChannels[0] || {}).name
+                                addImageButton.textContent = `+ Add image (${mainChName})`
+
+                                const makeChannelUploadButton = (channelName) =>
+                                {
+                                    const btn = document.createElement("button")
+                                    btn.classList.add("btn", "btn-outline-secondary", "btn-sm", "mt-2", "ms-2")
+                                    btn.textContent = `+ Add image (${channelName})`
+                                    addEventListenerWithId(btn, "click", "add_image_ch_" + channelName, () =>
+                                    {
+                                        const input = document.createElement("input")
+                                        input.type = "file"
+                                        input.accept = "image/*"
+                                        input.multiple = true
+                                        input.style.display = "none"
+                                        addEventListenerWithId(input, "change", "upload_image_ch_" + channelName, async () =>
+                                        {
+                                            const files = Array.from(input.files)
+                                            if (files.length === 0) return
+
+                                            const overlay = document.createElement("div")
+                                            overlay.classList.add("upload-progress-overlay")
+                                            const panel = document.createElement("div")
+                                            panel.classList.add("upload-progress-panel")
+                                            const title = document.createElement("h5")
+                                            title.textContent = `Загрузка в канал «${channelName}»`
+                                            const progressWrapper = document.createElement("div")
+                                            progressWrapper.classList.add("progress")
+                                            const progressBar = document.createElement("div")
+                                            progressBar.classList.add("progress-bar", "progress-bar-striped", "progress-bar-animated")
+                                            progressBar.style.width = "0%"
+                                            progressWrapper.appendChild(progressBar)
+                                            const statusText = document.createElement("div")
+                                            statusText.classList.add("upload-status")
+                                            statusText.textContent = `0 / ${files.length}`
+                                            const errorsDiv = document.createElement("div")
+                                            errorsDiv.classList.add("upload-errors")
+                                            panel.append(title, progressWrapper, statusText, errorsDiv)
+                                            overlay.appendChild(panel)
+                                            document.body.appendChild(overlay)
+
+                                            let uploaded = 0
+                                            const errors = []
+                                            for (const file of files)
+                                            {
+                                                const formData = new FormData()
+                                                formData.append("image", file)
+                                                try
+                                                {
+                                                    const response = await fetch(
+                                                        `/upload_image_channel/${project.id_project}/${encodeURIComponent(channelName)}`,
+                                                        {method: "POST", body: formData})
+                                                    const answer = await response.json()
+                                                    if (!(answer.result === "ok"))
+                                                    {
+                                                        errors.push(`${file.name}: ${answer.message || answer.detail || "error"}`)
+                                                    }
+                                                }
+                                                catch (error)
+                                                {
+                                                    errors.push(`${file.name}: ${error}`)
+                                                }
+                                                uploaded++
+                                                const percent = Math.round((uploaded / files.length) * 100)
+                                                progressBar.style.width = `${percent}%`
+                                                progressBar.textContent = `${percent}%`
+                                                statusText.textContent = `${uploaded} / ${files.length}`
+                                                errorsDiv.innerHTML = errors.map(e => `<div>${e}</div>`).join("")
+                                            }
+                                            statusText.textContent = errors.length
+                                                ? `Готово с ошибками: ${errors.length}`
+                                                : `Готово: ${files.length}`
+                                            setTimeout(() => overlay.remove(), errors.length ? 4000 : 1200)
+                                        })
+                                        input.click()
+                                    })
+                                    return btn
+                                }
+
+                                for (const ch of projChannels)
+                                {
+                                    if (ch.name === mainChName) continue
+                                    imagesDiv.appendChild(makeChannelUploadButton(ch.name))
+                                }
+                            }
                         },
                         (errorText) =>
                         {

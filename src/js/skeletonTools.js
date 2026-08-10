@@ -561,6 +561,29 @@ export function setupSkeletonMode(
         })
 
         // --- Save functions ---
+        // Автосохранение идёт раз в 15 секунд в фоне. Если сервер отвечает ошибкой
+        // (например, нет прав на запись в каталог проекта), сообщаем один раз,
+        // иначе разметка не сохраняется, а пользователь об этом не знает.
+        let saveErrorReported = false
+
+        const reportSaveError = (what, message) =>
+        {
+            if (saveErrorReported)
+            {
+                return
+            }
+            saveErrorReported = true
+            alert(`Не удалось сохранить ${what} на сервере: ${message}\n\n`
+                + "Разметка осталась в браузере — не закрывайте вкладку. "
+                + "Исправьте проблему на сервере и нажмите «Сохранить».")
+        }
+
+        const responseError = async (response) =>
+        {
+            const body = await response.json().catch(() => ({}))
+            return new Error(body.detail || `HTTP ${response.status}`)
+        }
+
         const saveSkeleton = () =>
         {
             if (!skelUnsaved)
@@ -572,11 +595,19 @@ export function setupSkeletonMode(
             formData.append("json_data", JSON.stringify(data))
             return fetch(skelSaveUrl(activeChannel),
                 {method: "POST", body: formData})
-                .then(r => r.json())
+                .then(async r =>
+                {
+                    if (!r.ok)
+                    {
+                        throw await responseError(r)
+                    }
+                    return r.json()
+                })
                 .then(resp =>
                 {
                     if (resp.result === "ok")
                     {
+                        saveErrorReported = false
                         skelUnsaved = false
                         const hadSkeleton = image.has_skeleton
                         if (hasChannels)
@@ -601,6 +632,7 @@ export function setupSkeletonMode(
                         }
                     }
                 })
+                .catch(e => reportSaveError("скелет", e.message))
         }
 
         const saveMask = () =>
@@ -643,16 +675,28 @@ export function setupSkeletonMode(
                     formData.append("image", blob, "mask.png")
                     fetch(`/upload_skeleton_mask/${idp}/${encodeURIComponent(maskKey(activeChannel))}`,
                         {method: "POST", body: formData})
-                        .then(r => r.json())
+                        .then(async r =>
+                        {
+                            if (!r.ok)
+                            {
+                                throw await responseError(r)
+                            }
+                            return r.json()
+                        })
                         .then(resp =>
                         {
                             if (resp.result === "ok")
                             {
                                 maskUnsaved = false
+                                saveErrorReported = false
                             }
                             resolve()
                         })
-                        .catch(() => resolve())
+                        .catch(e =>
+                        {
+                            reportSaveError("маску", e.message)
+                            resolve()
+                        })
                 }, "image/png")
             })
         }

@@ -239,11 +239,10 @@ async def upload_skeleton_data_channel(id_project: int, channel: str, image_name
 
     settings = _load_settings(id_project)
     skel_dir = _skeletons_dir(id_project, channel, settings)
-    if not path.exists(skel_dir):
-        makedirs(skel_dir)
     image_name = transliterate(path.basename(image_name))
     skel_file = join_path(skel_dir, f"{image_name}.json")
     try:
+        makedirs(skel_dir, exist_ok=True)
         data = loads(json_data)
         with open(skel_file, "w", encoding="utf-8") as f:
             dump(data, f, ensure_ascii=False, indent=4)

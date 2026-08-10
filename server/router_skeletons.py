@@ -63,17 +63,20 @@ async def upload_skeleton_data(id_project: int, image_name: str, json_data: str 
         raise HTTPException(status_code=404, detail="Project not found")
 
     skeleton_dir = join_path(project_path, "skeletons")
-    if not path.exists(skeleton_dir):
-        makedirs(skeleton_dir)
 
     image_name = transliterate(path.basename(image_name))
     skeleton_file = join_path(skeleton_dir, f"{image_name}.json")
 
     try:
+        makedirs(skeleton_dir, exist_ok=True)
         data = loads(json_data)
         with open(skeleton_file, "w", encoding="utf-8") as f:
             dump(data, f, ensure_ascii=False, indent=4)
+    except Exception as exception:
+        raise HTTPException(status_code=500, detail=f"Error saving skeleton data: {exception}")
 
+    # SVG-превью скелета — не критично, разметка уже сохранена
+    try:
         connections = []
         img_w, img_h = 1000, 1000
         settings_file = join_path(project_path, "project_settings.json")
@@ -95,10 +98,10 @@ async def upload_skeleton_data(id_project: int, image_name: str, json_data: str 
         svg_file = join_path(skeleton_dir, f"{image_name}.svg")
         with open(svg_file, "w", encoding="utf-8") as f:
             f.write(svg_content)
+    except Exception:
+        pass
 
-        return JSONResponse(content={"result": "ok", "message": "Skeleton data saved"})
-    except Exception as exception:
-        raise HTTPException(status_code=500, detail=f"Error saving skeleton data: {exception}")
+    return JSONResponse(content={"result": "ok", "message": "Skeleton data saved"})
 
 
 @router.get("/get_skeleton_svg/{id_project}/{image_name}", tags=["Skeleton"])
@@ -192,14 +195,16 @@ async def upload_skeleton_mask(id_project: int, image_name: str, image: UploadFi
         raise HTTPException(status_code=404, detail="Project not found")
 
     masks_dir = join_path(project_path, "skeleton_masks")
-    if not path.exists(masks_dir):
-        makedirs(masks_dir)
 
     image_name = transliterate(path.basename(image_name))
     mask_path = join_path(masks_dir, f"{image_name}.png")
 
     contents = await image.read()
-    with open(mask_path, "wb") as f:
-        f.write(contents)
+    try:
+        makedirs(masks_dir, exist_ok=True)
+        with open(mask_path, "wb") as f:
+            f.write(contents)
+    except Exception as exception:
+        raise HTTPException(status_code=500, detail=f"Error saving skeleton mask: {exception}")
 
     return JSONResponse(content={"result": "ok"})

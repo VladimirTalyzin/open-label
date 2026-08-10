@@ -749,20 +749,48 @@ export function setupSkeletonMode(
                 })
                 .then(res =>
                 {
-                    const pts = (res.points || []).map(p => ({
-                        name: p.name || "", x: p.x, y: p.y,
-                        visible: p.visible !== undefined ? p.visible : 2
-                    }))
+                    const templatePoints = (currentTemplate.points || [])
+                    // Имена берём из шаблона проекта: модель отдаёт их в нижнем регистре
+                    // (nose_top), а канон — с заглавной (Nose_top). Сопоставление
+                    // позиционное, по индексу — так же, как в экспорте.
+                    const pts = (res.points || []).map((p, i) =>
+                    {
+                        // Точка, которой модель не увидела (confidence ниже порога сервиса),
+                        // достроена по эталонной форме — filled=true. Такие ставим скрытыми,
+                        // чтобы не выдавать выдумку за распознанное.
+                        const unsure = p.filled === true || p.detected === false
+                        return {
+                            name: (templatePoints[i] || {}).name || p.name || "",
+                            x: p.x,
+                            y: p.y,
+                            visible: unsure ? 1 : (p.visible !== undefined ? p.visible : 2),
+                            confidence: p.confidence
+                        }
+                    })
                     if (pts.length === 0)
                     {
                         return
                     }
+                    if (templatePoints.length && pts.length !== templatePoints.length)
+                    {
+                        alert(`Модель вернула ${pts.length} точек, а в шаблоне их ${templatePoints.length}.`
+                            + " Проверьте, что канал указывает на подходящую модель.")
+                        return
+                    }
+                    const unsureCount = pts.filter(p => p.visible < 2).length
                     pushUndo("skeleton")
                     const label = imageCardDiv.getAttribute("active_label") ||
                         (project.labels && project.labels.length > 0 ? project.labels[0].label : (currentTemplate.skeleton_class || "object"))
-                    annotator.setAnnotations([{label, points: pts}])
+                    // Предсказанный скелет добавляем к имеющимся, а не заменяем их:
+                    // на кадре может быть несколько животных и уже сделанная разметка.
+                    annotator.setAnnotations([...annotator.getAnnotations(), {label, points: pts}])
                     skelUnsaved = true
                     saveButton.disabled = false
+                    if (unsureCount > 0)
+                    {
+                        alert(`Добавлен скелет. Модель не нашла ${unsureCount} из ${pts.length} точек —`
+                            + " они помечены скрытыми и расставлены приблизительно, поправьте вручную.")
+                    }
                 })
                 .catch(e => alert("Предсказание не удалось: " + e.message))
                 .finally(() => { if (btn) { btn.disabled = false } })

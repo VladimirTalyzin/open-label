@@ -8,8 +8,20 @@ from PIL import Image
 from utility import transliterate, join_path
 from settings import PREVIEW_WIDTH
 from helpers import get_script_directory
+from router_channels import _channel_template, _main_channel_name
 
 router = APIRouter()
+
+
+def _root_connections(settings: dict) -> list:
+    """Связи скелета для корневого хранилища проекта.
+
+    Эндпоинты этого модуля работают с корнем проекта, то есть с ОСНОВНЫМ каналом,
+    а его шаблон может лежать на самом канале, а не на проекте (в многоканальных
+    проектах project-level "skeleton_template" бывает null).
+    """
+    template = _channel_template(settings, _main_channel_name(settings))
+    return template.get("connections") or []
 
 
 def generate_skeleton_svg(skeletons, connections, img_width, img_height, preview_width=None):
@@ -83,8 +95,7 @@ async def upload_skeleton_data(id_project: int, image_name: str, json_data: str 
         if path.exists(settings_file):
             with open(settings_file, "r") as sf:
                 settings = load(sf)
-                tpl = settings.get("skeleton_template", {})
-                connections = tpl.get("connections", [])
+                connections = _root_connections(settings)
                 images_dir = join_path(project_path, "images")
                 img_path = join_path(images_dir, image_name)
                 if path.exists(img_path):
@@ -138,8 +149,7 @@ async def regenerate_skeleton_svgs(id_project: int):
     if path.exists(settings_file):
         with open(settings_file, "r") as sf:
             settings = load(sf)
-            tpl = settings.get("skeleton_template", {})
-            connections = tpl.get("connections", [])
+            connections = _root_connections(settings)
 
     images_dir = join_path(project_path, "images")
     count = 0

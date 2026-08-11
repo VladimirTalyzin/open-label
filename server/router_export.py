@@ -50,6 +50,24 @@ def _channel_sub(settings, channel):
     return "" if channel == main else channel
 
 
+def _channel_template(settings, channel):
+    """Шаблон скелета с учётом канала: собственный шаблон канала, иначе шаблон проекта.
+
+    Та же логика, что в router_channels.py (_channel_template): у канала может быть свой
+    набор точек (side — 29, top — 14), и экспорт обязан брать именно его, иначе имена и
+    число точек в заголовках не совпадут с разметкой канала.
+    """
+    if channel:
+        for ch in settings.get("channels", []) or []:
+            if ch.get("name") == channel:
+                channel_template = ch.get("skeleton_template") or {}
+                if channel_template.get("points"):
+                    return channel_template
+                break
+
+    return settings.get("skeleton_template") or {}
+
+
 def _channel_mask_key(settings, channel, image_name):
     sub = _channel_sub(settings, channel)
     return image_name if not sub else f"{sub}__{image_name}"
@@ -401,9 +419,17 @@ async def export_dataset(
         raise HTTPException(status_code=400, detail="Invalid split percentages")
 
     project_path, settings = _load_project(id_project)
-    skeleton_template = settings.get("skeleton_template", {"points": [], "connections": []})
-    default_class = skeleton_template.get("skeleton_class", "") or "object"
-    default_superclass = skeleton_template.get("skeleton_superclass", "") or "object"
+    skeleton_template = _channel_template(settings, channel)
+    project_template = settings.get("skeleton_template") or {}
+    # класс/суперкласс тоже канальные, с откатом на проектные
+    default_class = skeleton_template.get("skeleton_class") or project_template.get("skeleton_class") or "object"
+    default_superclass = (skeleton_template.get("skeleton_superclass")
+                          or project_template.get("skeleton_superclass") or "object")
+
+    if not skeleton_template.get("points"):
+        where = f"channel '{channel}'" if channel else "project"
+        raise HTTPException(status_code=400, detail=f"Skeleton template for {where} is empty")
+
     annotated = _collect_annotated_images(project_path, settings, channel)
 
     if not annotated:

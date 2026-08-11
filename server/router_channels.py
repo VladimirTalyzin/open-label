@@ -226,9 +226,18 @@ async def get_skeleton_data_channel(id_project: int, channel: str, image_name: s
 
 
 def _channel_template(settings: dict, channel: str) -> dict:
+    """Шаблон скелета канала: собственный шаблон канала, иначе шаблон проекта.
+
+    У канала может быть свой набор точек (side — 29, top — 14). Если у канала своих
+    точек нет (или ключ null), берём шаблон проекта — который в многоканальных
+    проектах тоже может быть null, поэтому везде `or {}`.
+    """
     for ch in _channels(settings):
         if ch.get("name") == channel:
-            return ch.get("skeleton_template") or {}
+            channel_template = ch.get("skeleton_template") or {}
+            if channel_template.get("points"):
+                return channel_template
+            break
     return settings.get("skeleton_template") or {}
 
 
